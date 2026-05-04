@@ -56,3 +56,15 @@ Para publicar la app en internet puedes usar Vercel, Netlify o Cloudflare Pages 
 Nota: esta etapa centraliza los datos en una fila JSON para migrar rápido desde la versión local. Una segunda etapa recomendable es separar alumnos, docentes, inventario, solicitudes y mensajes en tablas independientes con permisos más finos por perfil.
 
 La app inicia sin registros de demostración. Los datos reales se cargan desde el módulo `Bases de datos` y quedan persistidos en `localStorage`.
+
+## Sugerencias inteligentes con IA
+
+El portal docente incluye sugerencias de materiales por perfil. La app funciona siempre con recomendaciones locales basadas en historial, departamento y stock disponible. Para activar IA real, despliega la Edge Function de Supabase y guarda la clave como secreto del proyecto:
+
+```bash
+supabase functions deploy teacher-suggestions
+supabase secrets set OPENAI_API_KEY=tu_clave_openai
+supabase secrets set OPENAI_MODEL=gpt-4.1-mini
+```
+
+La clave de OpenAI queda en Supabase, no en el navegador ni en Cloudflare.

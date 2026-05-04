@@ -3065,6 +3065,49 @@ function MissingProfile({ email, onLogout }) {
   );
 }
 
+function buildLocalTeacherSuggestions({ teacher, inventory, requests, cart }) {
+  const cartKeys = new Set(cart.map((item) => `${item.type}-${item.id}`));
+  const available = inventory.filter((item) => Number(item.stock) > 0);
+  const historyCounts = new Map();
+  requests.forEach((request) => {
+    request.items?.forEach((item) => {
+      const key = `${item.type}-${item.id}`;
+      historyCounts.set(key, (historyCounts.get(key) || 0) + Number(item.qty || 1));
+    });
+  });
+  const fromHistory = available
+    .map((item) => ({ ...item, score: historyCounts.get(`${item.type}-${item.id}`) || 0 }))
+    .filter((item) => item.score > 0 && !cartKeys.has(`${item.type}-${item.id}`))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 4);
+  const departmentWords = normalizeHeader(teacher.department || teacher.name || "").split(" ").filter((word) => word.length > 3);
+  const byDepartment = available
+    .map((item) => {
+      const haystack = normalizeHeader(`${item.name} ${item.category || ""} ${item.description || ""}`);
+      const score = departmentWords.reduce((total, word) => total + (haystack.includes(word) ? 1 : 0), 0);
+      return { ...item, score };
+    })
+    .filter((item) => item.score > 0 && !cartKeys.has(`${item.type}-${item.id}`))
+    .sort((a, b) => b.score - a.score || Number(b.stock) - Number(a.stock))
+    .slice(0, 4);
+  const popular = available
+    .map((item) => ({ ...item, score: statefulNameScore(item.name, requests) }))
+    .filter((item) => !cartKeys.has(`${item.type}-${item.id}`))
+    .sort((a, b) => b.score - a.score || Number(b.stock) - Number(a.stock))
+    .slice(0, 4);
+  const sections = [];
+  if (fromHistory.length) sections.push({ id: "historial", title: "Basado en tus solicitudes", reason: "Estos ítems aparecen en solicitudes anteriores de este perfil.", items: fromHistory });
+  if (byDepartment.length) sections.push({ id: "area", title: `Sugerido para ${teacher.department || "tu área"}`, reason: "Coincide con el departamento o especialidad del docente.", items: byDepartment });
+  const popularItems = popular.filter((item) => !sections.flatMap((section) => section.items).some((existing) => existing.id === item.id && existing.type === item.type));
+  if (popularItems.length) sections.push({ id: "popular", title: "Disponibles y solicitados", reason: "Materiales con uso recurrente y stock disponible.", items: popularItems.slice(0, 4) });
+  return sections.slice(0, 3);
+}
+
+function statefulNameScore(name, requests) {
+  const normalizedName = normalizeHeader(name);
+  return requests.reduce((score, request) => score + (request.items || []).filter((item) => normalizeHeader(item.name) === normalizedName).length, 0);
+}
+
 function TeacherWorkspace({ currentUser, onLogout }) {
   const { state, dispatch, notify } = useApp();
   const [tab, setTab] = useState("home");
@@ -3079,10 +3122,17 @@ function TeacherWorkspace({ currentUser, onLogout }) {
   const [notes, setNotes] = useState("");
   const [message, setMessage] = useState("");
   const [chatRequestId, setChatRequestId] = useState("");
+  const [smartSuggestions, setSmartSuggestions] = useState([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [suggestionsSource, setSuggestionsSource] = useState("local");
   const inventory = [
     ...state.materials.map((item) => ({ ...item, type: "material", statusText: `${item.stock} ${item.unit}` })),
     ...state.tools.map((item) => ({ ...item, type: "tool", category: "Herramientas", stock: item.status === "disponible" ? 1 : 0, statusText: item.status }))
   ].filter((item) => `${item.name} ${item.code} ${item.category}`.toLowerCase().includes(query.toLowerCase()));
+  const fullInventory = [
+    ...state.materials.map((item) => ({ ...item, type: "material", statusText: `${item.stock} ${item.unit}` })),
+    ...state.tools.map((item) => ({ ...item, type: "tool", category: "Herramientas", stock: item.status === "disponible" ? 1 : 0, statusText: item.status }))
+  ];
   const myRequests = (state.requests || []).filter((request) => request.requesterId === teacher.id);
   const myMessages = (state.messages || []).filter((msg) => msg.teacherId === teacher.id).sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
   const unreadTeacherMessagesCount = myMessages.filter((msg) => msg.from === "pañol" && !msg.teacherRead).length;
@@ -3125,6 +3175,48 @@ function TeacherWorkspace({ currentUser, onLogout }) {
     setTimeout(() => setCartPulse(""), 1100);
     setTimeout(() => setLastAdded(""), 2600);
   };
+  const addSuggestionKit = (suggestion) => {
+    const nextCart = [...cart];
+    suggestion.items.forEach((item) => {
+      const existing = nextCart.find((cartItem) => cartItem.id === item.id && cartItem.type === item.type);
+      if (existing) existing.qty = Number(existing.qty) + Number(item.qty || 1);
+      else nextCart.push({ type: item.type, id: item.id, name: item.name, code: item.code, category: item.category, qty: Number(item.qty || 1), nonReturnable: false });
+    });
+    setCart(nextCart);
+    setCartOpen(true);
+    setCartPulse("cart-pulse-blue");
+    setTimeout(() => setCartPulse(""), 1100);
+    notify("Sugerencia agregada al carrito");
+  };
+  const refreshSuggestions = async () => {
+    const localSuggestions = buildLocalTeacherSuggestions({ teacher, inventory: fullInventory, requests: myRequests, cart });
+    setSmartSuggestions(localSuggestions);
+    setSuggestionsSource("local");
+    if (!isSupabaseConfigured || !supabase) return;
+    setSuggestionsLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("teacher-suggestions", {
+        body: {
+          teacher: { name: teacher.name, department: teacher.department || "", email: teacher.email || "" },
+          inventory: fullInventory.slice(0, 400).map((item) => ({ id: item.id, type: item.type, name: item.name, code: item.code, category: item.category, stock: item.stock, unit: item.unit, status: item.status })),
+          recentRequests: myRequests.slice(-10).map((request) => ({ status: request.status, items: request.items, notes: request.notes })),
+          cart
+        }
+      });
+      if (error || !data?.suggestions?.length) throw error || new Error("Sin sugerencias remotas");
+      setSmartSuggestions(data.suggestions);
+      setSuggestionsSource("ia");
+    } catch (error) {
+      console.info("Sugerencias IA no disponibles, usando recomendaciones locales", error);
+      setSuggestionsSource("local");
+    } finally {
+      setSuggestionsLoading(false);
+    }
+  };
+  useEffect(() => {
+    setSmartSuggestions(buildLocalTeacherSuggestions({ teacher, inventory: fullInventory, requests: myRequests, cart }));
+    setSuggestionsSource("local");
+  }, [teacher.id, state.requests.length, state.materials.length, state.tools.length]);
   const submitRequest = () => {
     if (!cart.length) return notify("Agrega ítems al carrito", "error");
     dispatch({ type: "CREATE_REQUEST", request: { requesterType: "teacher", requesterId: teacher.id, requesterName: teacher.name, requesterEmail: teacher.email || "", department: teacher.department || "", expectedDate, notes, items: cart } });
@@ -3170,6 +3262,41 @@ function TeacherWorkspace({ currentUser, onLogout }) {
               <div className="panel"><p className="text-sm text-slate-400">Listas / entregadas</p><p className="mt-2 text-3xl font-bold text-white">{readyRequests.length}</p></div>
               <div className="panel"><p className="text-sm text-slate-400">Mensajes nuevos</p><p className="mt-2 text-3xl font-bold text-white">{unreadTeacherMessagesCount}</p></div>
               <button type="button" onClick={() => setCartOpen(true)} className={`panel text-left transition hover:border-safety-500 ${cartPulse}`}><p className="text-sm text-slate-400">Ítems en carrito</p><p className="mt-2 text-3xl font-bold text-white">{cart.length}</p></button>
+            </section>
+            <section className="panel grid gap-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="section-title mb-1"><Wand2 size={18} />Sugerencias inteligentes</h2>
+                  <p className="text-sm text-slate-400">{suggestionsSource === "ia" ? "Generadas con IA según tu perfil, historial y stock disponible." : "Recomendaciones locales según historial, área y disponibilidad."}</p>
+                </div>
+                <Button variant="secondary" onClick={refreshSuggestions} disabled={suggestionsLoading}><Wand2 size={16} />{suggestionsLoading ? "Analizando..." : "Actualizar IA"}</Button>
+              </div>
+              {smartSuggestions.length === 0 && <p className="rounded-md border border-steel-700 bg-steel-850 p-4 text-sm text-slate-400">Aún no hay historial suficiente para sugerir kits. Puedes buscar materiales en Inventario.</p>}
+              <div className="grid gap-3 xl:grid-cols-3">
+                {smartSuggestions.map((suggestion) => (
+                  <div key={suggestion.id || suggestion.title} className="rounded-md border border-steel-700 bg-steel-850 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-bold text-white">{suggestion.title}</p>
+                        <p className="mt-1 text-sm text-slate-400">{suggestion.reason}</p>
+                      </div>
+                      <Badge tone={suggestionsSource === "ia" ? "blue" : "amber"}>{suggestionsSource === "ia" ? "IA" : "local"}</Badge>
+                    </div>
+                    <div className="mt-3 grid gap-2">
+                      {(suggestion.items || []).slice(0, 5).map((item) => (
+                        <div key={`${item.type}-${item.id}`} className="flex items-center justify-between gap-2 rounded-md border border-steel-700 bg-steel-900/70 px-3 py-2">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-semibold text-slate-100">{item.name}</p>
+                            <p className="text-xs text-slate-400">{item.code || "s/c"} · {item.category || item.type} · disp. {item.stock ?? item.statusText ?? "revisar"}</p>
+                          </div>
+                          <Button variant="secondary" className="shrink-0 px-2 py-1" onClick={() => addToCart(item)}><Plus size={15} /></Button>
+                        </div>
+                      ))}
+                    </div>
+                    <Button className="mt-3 w-full" onClick={() => addSuggestionKit(suggestion)}><PackagePlus size={16} />Agregar sugerencia</Button>
+                  </div>
+                ))}
+              </div>
             </section>
             <section className="grid gap-4 xl:grid-cols-[1fr_.9fr]">
               <div className="panel grid gap-3">
