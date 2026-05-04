@@ -68,3 +68,11 @@ supabase secrets set OPENAI_MODEL=gpt-4.1-mini
 ```
 
 La clave de OpenAI queda en Supabase, no en el navegador ni en Cloudflare.
+
+Para el asistente IA del administrador/pañolero despliega tambien:
+
+```bash
+npx supabase functions deploy panol-assistant
+```
+
+Usa los mismos secretos `OPENAI_API_KEY` y `OPENAI_MODEL` que configuraste para `teacher-suggestions`.

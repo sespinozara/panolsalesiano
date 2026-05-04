@@ -75,6 +75,7 @@ const permissionOptions = [
   ["loans", "Entrega y recepción"],
   ["requests", "Solicitudes docentes"],
   ["messages", "Mensajes"],
+  ["assistant", "Asistente IA"],
   ["invoices", "Facturas"],
   ["database", "Bases de datos"],
   ["reports", "Reportes"],
@@ -897,6 +898,7 @@ function Layout({ section, setSection, currentUser, onLogout }) {
     ["loans", "Entrega y recepción", ClipboardList],
     ["requests", "Solicitudes docentes", Inbox],
     ["messages", "Mensajes", MessageSquare],
+    ["assistant", "Asistente IA", Wand2],
     ["invoices", "Facturas", ReceiptText],
     ["database", "Bases de datos", Database],
     ["reports", "Reportes", BarChart3],
@@ -909,6 +911,7 @@ function Layout({ section, setSection, currentUser, onLogout }) {
     loans: "Entrega y recepción",
     requests: "Solicitudes docentes",
     messages: "Mensajes",
+    assistant: "Asistente IA",
     invoices: "Carga de facturas",
     database: "Carga de bases de datos",
     reports: "Reportes",
@@ -1015,6 +1018,7 @@ function Layout({ section, setSection, currentUser, onLogout }) {
           {section === "loans" && <Loans />}
           {section === "requests" && <TeacherRequestsInbox />}
           {section === "messages" && <MessagesCenter focusedTeacherId={focusedTeacherId} />}
+          {section === "assistant" && <AdminAssistant />}
           {section === "invoices" && <Invoices />}
           {section === "database" && <DatabaseImport />}
           {section === "reports" && <Reports />}
@@ -1157,6 +1161,159 @@ function AlertTile({ label, value, tone }) {
     <div className={`flex items-center justify-between gap-3 rounded-md border px-4 py-3 ${tone === "red" ? "border-red-500/35 bg-red-500/10 text-red-200" : "border-amber-500/35 bg-amber-500/10 text-amber-200"}`}>
       <p className="text-sm font-semibold">{label}</p>
       <p className="text-2xl font-bold">{value}</p>
+    </div>
+  );
+}
+
+function buildAdminAiContext(state) {
+  const activeLoans = state.loans.filter((loan) => loan.status === "activo");
+  const overdue = activeLoans.filter(isOverdue);
+  const dueSoon = activeLoans.filter((loan) => {
+    const days = Math.ceil((new Date(loan.expectedReturn) - new Date(today())) / 86400000);
+    return days >= 0 && days <= 2;
+  });
+  const loanedTools = activeLoans.flatMap((loan) => loan.items.filter((item) => item.type === "tool").map((item) => ({ ...item, requesterName: loan.requesterName, expectedReturn: loan.expectedReturn, folio: displayFolio(loan, "PRE") })));
+  const materialUse = Object.values(state.loans.flatMap((loan) => loan.items).reduce((acc, item) => {
+    const key = item.code || item.name;
+    acc[key] = acc[key] || { name: item.name, code: item.code, qty: 0 };
+    acc[key].qty += Number(item.qty || 1);
+    return acc;
+  }, {})).sort((a, b) => b.qty - a.qty).slice(0, 10);
+  const blockedPeople = [...state.students.map((person) => ({ ...person, type: "student" })), ...state.teachers.map((person) => ({ ...person, type: "teacher" }))]
+    .map((person) => ({ ...person, blockReason: getBlockReason(state.loans, person.type, person.id) }))
+    .filter((person) => person.blockReason);
+  return {
+    today: today(),
+    counts: {
+      activeLoans: activeLoans.length,
+      overdueLoans: overdue.length,
+      dueSoonLoans: dueSoon.length,
+      blockedPeople: blockedPeople.length,
+      loanedTools: loanedTools.length,
+      pendingTeacherRequests: (state.requests || []).filter((request) => request.status === "pendiente").length
+    },
+    overdue,
+    dueSoon,
+    loanedTools,
+    blockedPeople,
+    materialUse,
+    requests: (state.requests || []).slice(0, 50),
+    recentLoans: state.loans.slice(0, 80),
+    tools: state.tools,
+    lowStock: state.materials.filter((item) => Number(item.stock) < Number(item.minStock)).slice(0, 60)
+  };
+}
+
+function localAdminLoanAnalysis(state) {
+  const context = buildAdminAiContext(state);
+  const actions = [];
+  if (context.overdue.length) actions.push(`Contactar a ${context.overdue.length} solicitante(s) con préstamos vencidos.`);
+  if (context.dueSoon.length) actions.push(`Preparar recordatorio para ${context.dueSoon.length} préstamo(s) que vencen pronto.`);
+  if (context.loanedTools.length) actions.push(`Revisar ${context.loanedTools.length} herramienta(s) actualmente fuera del pañol.`);
+  if (context.blockedPeople.length) actions.push(`Mantener bloqueo de ${context.blockedPeople.length} persona(s) hasta regularizar devolución.`);
+  if (!actions.length) actions.push("No hay riesgos urgentes detectados en préstamos activos.");
+  return {
+    title: "Análisis local de préstamos",
+    summary: `Activos: ${context.counts.activeLoans}. Vencidos: ${context.counts.overdueLoans}. Por vencer: ${context.counts.dueSoonLoans}. Herramientas prestadas: ${context.counts.loanedTools}.`,
+    bullets: actions,
+    tables: [
+      { title: "Préstamos vencidos", rows: context.overdue.slice(0, 8).map((loan) => ({ folio: displayFolio(loan, "PRE"), solicitante: loan.requesterName, vence: formatDate(loan.expectedReturn), atraso: overdueDays(loan.expectedReturn) })) },
+      { title: "Herramientas fuera del pañol", rows: context.loanedTools.slice(0, 8).map((item) => ({ folio: item.folio, herramienta: item.name, solicitante: item.requesterName, vence: formatDate(item.expectedReturn) })) }
+    ]
+  };
+}
+
+function localAdminQuestionAnswer(state, question) {
+  const text = normalizeHeader(question);
+  const context = buildAdminAiContext(state);
+  if (!question.trim()) return null;
+  if (text.includes("venc") || text.includes("atras")) {
+    return { title: "Préstamos vencidos", summary: context.overdue.length ? `Hay ${context.overdue.length} préstamo(s) vencidos.` : "No hay préstamos vencidos.", bullets: context.overdue.slice(0, 10).map((loan) => `${displayFolio(loan, "PRE")} · ${loan.requesterName} · ${overdueDays(loan.expectedReturn)} día(s) de atraso`) };
+  }
+  if (text.includes("herramient") || text.includes("fuera") || text.includes("prestada")) {
+    return { title: "Herramientas fuera del pañol", summary: context.loanedTools.length ? `Hay ${context.loanedTools.length} herramienta(s) prestadas.` : "No hay herramientas prestadas activas.", bullets: context.loanedTools.slice(0, 12).map((item) => `${item.folio} · ${item.name} · ${item.requesterName} · vence ${formatDate(item.expectedReturn)}`) };
+  }
+  if (text.includes("bloque")) {
+    return { title: "Personas bloqueadas", summary: context.blockedPeople.length ? `Hay ${context.blockedPeople.length} persona(s) bloqueadas.` : "No hay personas bloqueadas.", bullets: context.blockedPeople.slice(0, 12).map((person) => `${person.name}: ${person.blockReason}`) };
+  }
+  if (text.includes("mas pedido") || text.includes("solicitado") || text.includes("ranking")) {
+    return { title: "Ítems más solicitados", summary: "Ranking calculado con el historial registrado.", bullets: context.materialUse.slice(0, 10).map((item) => `${item.name} (${item.code || "s/c"}): ${item.qty}`) };
+  }
+  const people = [...state.students.map((person) => ({ ...person, typeLabel: "Alumno" })), ...state.teachers.map((person) => ({ ...person, typeLabel: "Profesor" }))];
+  const person = people.find((candidate) => text.includes(normalizeHeader(candidate.name).split(" ")[0]) || normalizeHeader(candidate.name).includes(text));
+  if (person) {
+    const loans = state.loans.filter((loan) => loan.requesterId === person.id || normalizeHeader(loan.requesterName) === normalizeHeader(person.name));
+    const requests = (state.requests || []).filter((request) => request.requesterId === person.id || normalizeHeader(request.requesterName) === normalizeHeader(person.name));
+    return { title: `Historial de ${person.name}`, summary: `${person.typeLabel}. Préstamos: ${loans.length}. Solicitudes: ${requests.length}.`, bullets: [...loans.slice(0, 8).map((loan) => `${displayFolio(loan, "PRE")} · ${loan.status} · ${loan.items.map((item) => `${item.name} (${item.qty})`).join(", ")}`), ...requests.slice(0, 5).map((request) => `${displayFolio(request, "SOL")} · ${request.status} · ${request.items.map((item) => `${item.name} (${item.qty})`).join(", ")}`)] };
+  }
+  return localAdminLoanAnalysis(state);
+}
+
+function AdminAssistant() {
+  const { state } = useApp();
+  const [question, setQuestion] = useState("");
+  const [answer, setAnswer] = useState(() => localAdminLoanAnalysis(state));
+  const [loading, setLoading] = useState(false);
+  const [source, setSource] = useState("local");
+  const askAssistant = async (mode = "question") => {
+    const localAnswer = mode === "loan-analysis" ? localAdminLoanAnalysis(state) : localAdminQuestionAnswer(state, question);
+    setAnswer(localAnswer);
+    setSource("local");
+    if (!isSupabaseConfigured || !supabase) return;
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("panol-assistant", {
+        body: { mode, question, context: buildAdminAiContext(state) }
+      });
+      if (error || !data?.answer) throw error || new Error("Sin respuesta IA");
+      setAnswer(data.answer);
+      setSource("ia");
+    } catch (error) {
+      console.info("Asistente IA no disponible, usando análisis local", error);
+      setSource("local");
+    } finally {
+      setLoading(false);
+    }
+  };
+  return (
+    <div className="grid gap-4">
+      <section className="panel grid gap-4">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-end">
+          <div className="flex-1">
+            <h2 className="section-title"><Wand2 size={18} />Asistente IA del pañol</h2>
+            <Field label="Pregunta en lenguaje natural">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-2.5 text-slate-500" size={18} />
+                <input className={`${inputClass} pl-10`} value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ej: qué herramientas están fuera, quién tiene atrasos, qué pidió Romero" onKeyDown={(event) => { if (event.key === "Enter") askAssistant("question"); }} />
+              </div>
+            </Field>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={() => askAssistant("question")} disabled={loading || !question.trim()}><Search size={16} />Preguntar</Button>
+            <Button variant="secondary" onClick={() => askAssistant("loan-analysis")} disabled={loading}><Wand2 size={16} />Analizar préstamos</Button>
+          </div>
+        </div>
+      </section>
+      <section className="panel grid gap-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h3 className="text-lg font-bold text-white">{answer?.title || "Resultado"}</h3>
+            <p className="mt-1 text-sm text-slate-400">{answer?.summary}</p>
+          </div>
+          <Badge tone={source === "ia" ? "blue" : "amber"}>{loading ? "analizando" : source === "ia" ? "IA" : "local"}</Badge>
+        </div>
+        {answer?.bullets?.length > 0 && (
+          <div className="grid gap-2">
+            {answer.bullets.map((item, index) => <div key={`${item}-${index}`} className="rounded-md border border-steel-700 bg-steel-850 px-3 py-2 text-sm text-slate-200">{item}</div>)}
+          </div>
+        )}
+        {answer?.tables?.map((table) => (
+          <div key={table.title} className="grid gap-2">
+            <h4 className="font-semibold text-white">{table.title}</h4>
+            <DataTable rows={table.rows || []} columns={Object.keys(table.rows?.[0] || {}).map((key) => [key, key])} compact />
+          </div>
+        ))}
+      </section>
     </div>
   );
 }
