@@ -3260,6 +3260,96 @@ function buildLocalTeacherSuggestions({ teacher, inventory, requests, cart }) {
   return sections.slice(0, 3);
 }
 
+function parseStudentCount(prompt = "") {
+  const match = String(prompt).match(/(\d{1,3})\s*(alumnos|estudiantes|personas)?/i);
+  return Math.max(1, Math.min(80, Number(match?.[1]) || 30));
+}
+
+function findLessonInventoryItem(available, keywords, usedKeys) {
+  const words = Array.isArray(keywords) ? keywords : [keywords];
+  return available
+    .map((item) => {
+      const haystack = normalizeHeader(`${item.name} ${item.code || ""} ${item.category || ""} ${item.description || ""}`);
+      const score = words.reduce((total, word) => total + (haystack.includes(normalizeHeader(word)) ? 1 : 0), 0);
+      return { ...item, lessonScore: score };
+    })
+    .filter((item) => item.lessonScore > 0 && !usedKeys.has(`${item.type}-${item.id}`))
+    .sort((a, b) => b.lessonScore - a.lessonScore || Number(b.stock) - Number(a.stock))[0];
+}
+
+function buildLocalLessonPlan({ prompt, teacher, inventory }) {
+  const normalizedPrompt = normalizeHeader(prompt);
+  const students = parseStudentCount(prompt);
+  const available = inventory.filter((item) => Number(item.stock) > 0);
+  const usedKeys = new Set();
+  const items = [];
+  const addMatch = (keywords, qtyRule) => {
+    const item = findLessonInventoryItem(available, keywords, usedKeys);
+    if (!item) return;
+    const stock = Number(item.stock) || 1;
+    const desiredQty = typeof qtyRule === "function" ? qtyRule({ students, item, stock }) : qtyRule;
+    const qty = Math.max(1, Math.min(stock, Number(desiredQty) || 1));
+    usedKeys.add(`${item.type}-${item.id}`);
+    items.push({ ...item, qty });
+  };
+
+  const isElectric = /circuit|electric|electron|serie|paralelo|voltaje|corriente|resistencia|led/.test(normalizedPrompt);
+  const isArduino = /arduino|program|robot|sensor|wifi|esp/.test(normalizedPrompt);
+  const isMeasurement = /medic|tester|multimetro|voltimetro|amperimetro/.test(normalizedPrompt);
+  const isWorkshop = /seguridad|epp|taller|herramient|mecan|maqueta|constru/.test(normalizedPrompt);
+
+  if (isArduino) {
+    addMatch(["arduino", "uno"], ({ students, stock }) => Math.min(Math.ceil(students / 4), stock));
+    addMatch(["protoboard", "breadboard"], ({ students }) => Math.ceil(students / 2));
+    addMatch(["cable", "jumper", "dupont"], ({ students }) => students * 3);
+    addMatch(["led"], ({ students }) => students);
+    addMatch(["resistencia", "ohm"], ({ students }) => students * 2);
+  }
+  if (isElectric || isMeasurement) {
+    addMatch(["protoboard", "breadboard"], ({ students }) => Math.ceil(students / 2));
+    addMatch(["resistencia", "ohm"], ({ students }) => students * 2);
+    addMatch(["led"], ({ students }) => students);
+    addMatch(["cable", "banana", "caiman", "jumper"], ({ students }) => students * 2);
+    addMatch(["multimetro", "tester"], ({ students, stock }) => Math.min(Math.ceil(students / 5), stock));
+    addMatch(["fuente", "transformador"], ({ stock }) => Math.min(4, stock));
+  }
+  if (isWorkshop) {
+    addMatch(["lente", "protector", "seguridad"], ({ students }) => students);
+    addMatch(["guante"], ({ students }) => students);
+    addMatch(["metro", "huincha"], ({ stock }) => Math.min(6, stock));
+    addMatch(["alicate"], ({ stock }) => Math.min(6, stock));
+    addMatch(["destornillador"], ({ stock }) => Math.min(6, stock));
+  }
+  if (!items.length) {
+    const departmentWords = normalizeHeader(`${teacher.department || ""} ${prompt}`).split(" ").filter((word) => word.length > 3);
+    available
+      .map((item) => {
+        const haystack = normalizeHeader(`${item.name} ${item.category || ""} ${item.description || ""}`);
+        const score = departmentWords.reduce((total, word) => total + (haystack.includes(word) ? 1 : 0), 0);
+        return { ...item, lessonScore: score };
+      })
+      .filter((item) => item.lessonScore > 0)
+      .sort((a, b) => b.lessonScore - a.lessonScore || Number(b.stock) - Number(a.stock))
+      .slice(0, 6)
+      .forEach((item) => {
+        const key = `${item.type}-${item.id}`;
+        if (usedKeys.has(key)) return;
+        usedKeys.add(key);
+        items.push({ ...item, qty: Math.max(1, Math.min(Number(item.stock) || 1, Math.ceil(students / 6))) });
+      });
+  }
+
+  return {
+    title: prompt ? `Preparacion sugerida para: ${prompt}` : "Preparacion sugerida de clase",
+    summary: `Propuesta inicial para ${students} alumno(s), usando solo stock disponible.`,
+    items: items.slice(0, 8),
+    notes: [
+      "Revisa cantidades antes de enviar la solicitud.",
+      "La propuesta no descuenta stock hasta que el pañol confirme la entrega."
+    ]
+  };
+}
+
 function statefulNameScore(name, requests) {
   const normalizedName = normalizeHeader(name);
   return requests.reduce((score, request) => score + (request.items || []).filter((item) => normalizeHeader(item.name) === normalizedName).length, 0);
@@ -3282,6 +3372,10 @@ function TeacherWorkspace({ currentUser, onLogout }) {
   const [smartSuggestions, setSmartSuggestions] = useState([]);
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   const [suggestionsSource, setSuggestionsSource] = useState("local");
+  const [lessonPrompt, setLessonPrompt] = useState("");
+  const [lessonPlan, setLessonPlan] = useState(null);
+  const [lessonLoading, setLessonLoading] = useState(false);
+  const [lessonSource, setLessonSource] = useState("local");
   const inventory = [
     ...state.materials.map((item) => ({ ...item, type: "material", statusText: `${item.stock} ${item.unit}` })),
     ...state.tools.map((item) => ({ ...item, type: "tool", category: "Herramientas", stock: item.status === "disponible" ? 1 : 0, statusText: item.status }))
@@ -3370,6 +3464,38 @@ function TeacherWorkspace({ currentUser, onLogout }) {
       setSuggestionsLoading(false);
     }
   };
+  const prepareLesson = async () => {
+    if (!lessonPrompt.trim()) return notify("Describe la clase que quieres preparar", "error");
+    const localPlan = buildLocalLessonPlan({ prompt: lessonPrompt, teacher, inventory: fullInventory });
+    setLessonPlan(localPlan);
+    setLessonSource("local");
+    if (!isSupabaseConfigured || !supabase) return;
+    setLessonLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("teacher-suggestions", {
+        body: {
+          mode: "lesson-plan",
+          lessonPrompt,
+          teacher: { name: teacher.name, department: teacher.department || "", email: teacher.email || "" },
+          inventory: fullInventory.slice(0, 400).map((item) => ({ id: item.id, type: item.type, name: item.name, code: item.code, category: item.category, stock: item.stock, unit: item.unit, status: item.status })),
+          recentRequests: myRequests.slice(-10).map((request) => ({ status: request.status, items: request.items, notes: request.notes })),
+          cart
+        }
+      });
+      if (error || !data?.lessonPlan?.items?.length) throw error || new Error("Sin preparacion remota");
+      setLessonPlan(data.lessonPlan);
+      setLessonSource("ia");
+    } catch (error) {
+      console.info("Preparador IA no disponible, usando propuesta local", error);
+      setLessonSource("local");
+    } finally {
+      setLessonLoading(false);
+    }
+  };
+  const addLessonPlanToCart = () => {
+    if (!lessonPlan?.items?.length) return notify("No hay items sugeridos para agregar", "error");
+    addSuggestionKit({ title: lessonPlan.title, items: lessonPlan.items });
+  };
   useEffect(() => {
     setSmartSuggestions(buildLocalTeacherSuggestions({ teacher, inventory: fullInventory, requests: myRequests, cart }));
     setSuggestionsSource("local");
@@ -3419,6 +3545,39 @@ function TeacherWorkspace({ currentUser, onLogout }) {
               <div className="panel"><p className="text-sm text-slate-400">Listas / entregadas</p><p className="mt-2 text-3xl font-bold text-white">{readyRequests.length}</p></div>
               <div className="panel"><p className="text-sm text-slate-400">Mensajes nuevos</p><p className="mt-2 text-3xl font-bold text-white">{unreadTeacherMessagesCount}</p></div>
               <button type="button" onClick={() => setCartOpen(true)} className={`panel text-left transition hover:border-safety-500 ${cartPulse}`}><p className="text-sm text-slate-400">Ítems en carrito</p><p className="mt-2 text-3xl font-bold text-white">{cart.length}</p></button>
+            </section>
+            <section className="panel grid gap-4">
+              <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+                <div>
+                  <h2 className="section-title mb-1"><Wand2 size={18} />Preparar clase con IA</h2>
+                  <p className="text-sm text-slate-400">Describe la actividad y el sistema arma una propuesta de materiales disponibles para cargar al carrito.</p>
+                </div>
+                <Badge tone={lessonSource === "ia" ? "blue" : "amber"}>{lessonSource === "ia" ? "IA" : "local"}</Badge>
+              </div>
+              <div className="grid gap-3 xl:grid-cols-[1fr_auto]">
+                <textarea className={`${inputClass} min-h-24 resize-y`} value={lessonPrompt} onChange={(e) => setLessonPrompt(e.target.value)} placeholder="Ej: clase de circuitos en serie para 2 medio, 30 alumnos" />
+                <Button onClick={prepareLesson} disabled={lessonLoading} className="self-start xl:self-stretch"><Wand2 size={16} />{lessonLoading ? "Preparando..." : "Preparar carrito"}</Button>
+              </div>
+              {lessonPlan && (
+                <div className="rounded-md border border-sky-500/40 bg-sky-500/10 p-4">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                    <div>
+                      <p className="font-bold text-white">{lessonPlan.title}</p>
+                      <p className="mt-1 text-sm text-slate-300">{lessonPlan.summary}</p>
+                    </div>
+                    <Button onClick={addLessonPlanToCart} disabled={!lessonPlan.items?.length}><PackagePlus size={16} />Agregar propuesta al carrito</Button>
+                  </div>
+                  <div className="mt-4 grid gap-2 md:grid-cols-2">
+                    {(lessonPlan.items || []).map((item) => (
+                      <div key={`${item.type}-${item.id || item.code || item.name}`} className="rounded-md border border-steel-700 bg-steel-900/80 px-3 py-2">
+                        <p className="font-semibold text-slate-100">{item.name}</p>
+                        <p className="text-xs text-slate-400">{item.code || "s/c"} · {item.category || item.type} · cantidad sugerida {item.qty || 1}</p>
+                      </div>
+                    ))}
+                  </div>
+                  {!!lessonPlan.notes?.length && <p className="mt-3 text-xs text-slate-400">{lessonPlan.notes.join(" ")}</p>}
+                </div>
+              )}
             </section>
             <section className="panel grid gap-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

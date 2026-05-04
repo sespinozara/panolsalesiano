@@ -32,15 +32,27 @@ function readOutputText(data: any) {
     .trim();
 }
 
+function enrichItems(candidates: any[], availableInventory: InventoryItem[]) {
+  return (candidates || [])
+    .map((candidate: any) => {
+      const byCode = availableInventory.find((item) => normalize(item.code || "") === normalize(candidate.code || ""));
+      const byName = availableInventory.find((item) => normalize(item.name) === normalize(candidate.name || ""));
+      const item = byCode || byName;
+      return item ? { ...item, qty: Math.max(1, Number(candidate.qty) || 1) } : null;
+    })
+    .filter(Boolean);
+}
+
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   try {
     const openaiKey = Deno.env.get("OPENAI_API_KEY");
     if (!openaiKey) {
-      return Response.json({ suggestions: [], source: "missing-openai-key" }, { headers: corsHeaders });
+      return Response.json({ suggestions: [], lessonPlan: null, source: "missing-openai-key" }, { headers: corsHeaders });
     }
 
     const payload = await request.json();
+    const mode = payload.mode || "suggestions";
     const inventory: InventoryItem[] = Array.isArray(payload.inventory) ? payload.inventory : [];
     const teacher = payload.teacher || {};
     const availableInventory = inventory
@@ -62,6 +74,13 @@ Deno.serve(async (request) => {
         status: item.status
       }))
     };
+    const isLessonPlan = mode === "lesson-plan";
+    const systemPrompt = isLessonPlan
+      ? "Eres asistente de un panol escolar tecnico. Debes preparar una propuesta de materiales para una clase usando SOLO items disponibles del inventario entregado. Responde exclusivamente JSON valido."
+      : "Eres asistente de un panol escolar tecnico. Sugiere kits breves y utiles para un docente usando SOLO items disponibles del inventario entregado. Responde exclusivamente JSON valido.";
+    const userPrompt = isLessonPlan
+      ? `Datos:\n${JSON.stringify({ ...compactPayload, lessonPrompt: payload.lessonPrompt || "" })}\n\nDevuelve este formato exacto: {"lessonPlan":{"title":"texto","summary":"texto breve","items":[{"code":"codigo inventario","name":"nombre inventario","qty":1}],"notes":["texto breve"]}}. Maximo 8 items. Las cantidades deben ser prudentes y no superar el stock disponible.`
+      : `Datos:\n${JSON.stringify(compactPayload)}\n\nDevuelve este formato exacto: {"suggestions":[{"id":"texto-corto","title":"texto","reason":"texto breve","items":[{"code":"codigo inventario","name":"nombre inventario","qty":1}]}]}. Maximo 3 sugerencias, maximo 5 items por sugerencia.`;
 
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
@@ -74,13 +93,11 @@ Deno.serve(async (request) => {
         input: [
           {
             role: "system",
-            content:
-              "Eres asistente de un panol escolar tecnico. Sugiere kits breves y utiles para un docente usando SOLO items disponibles del inventario entregado. Responde exclusivamente JSON valido."
+            content: systemPrompt
           },
           {
             role: "user",
-            content:
-              `Datos:\n${JSON.stringify(compactPayload)}\n\nDevuelve este formato exacto: {"suggestions":[{"id":"texto-corto","title":"texto","reason":"texto breve","items":[{"code":"codigo inventario","name":"nombre inventario","qty":1}]}]}. Maximo 3 sugerencias, maximo 5 items por sugerencia.`
+            content: userPrompt
           }
         ],
         temperature: 0.2
@@ -95,18 +112,24 @@ Deno.serve(async (request) => {
     const data = await response.json();
     const outputText = readOutputText(data);
     const parsed = JSON.parse(outputText);
+    if (isLessonPlan) {
+      const plan = parsed.lessonPlan || {};
+      const items = enrichItems(plan.items || [], availableInventory);
+      return Response.json({
+        lessonPlan: {
+          title: plan.title || "Preparacion sugerida de clase",
+          summary: plan.summary || "Propuesta generada con inventario disponible.",
+          items,
+          notes: Array.isArray(plan.notes) ? plan.notes.slice(0, 3) : []
+        },
+        source: "openai"
+      }, { headers: corsHeaders });
+    }
     const suggestions = (parsed.suggestions || []).map((suggestion: any) => ({
       id: suggestion.id || crypto.randomUUID(),
       title: suggestion.title || "Sugerencia inteligente",
       reason: suggestion.reason || "Basada en perfil, historial y stock disponible.",
-      items: (suggestion.items || [])
-        .map((candidate: any) => {
-          const byCode = availableInventory.find((item) => normalize(item.code || "") === normalize(candidate.code || ""));
-          const byName = availableInventory.find((item) => normalize(item.name) === normalize(candidate.name || ""));
-          const item = byCode || byName;
-          return item ? { ...item, qty: Math.max(1, Number(candidate.qty) || 1) } : null;
-        })
-        .filter(Boolean)
+      items: enrichItems(suggestion.items || [], availableInventory)
     })).filter((suggestion: any) => suggestion.items.length > 0);
 
     return Response.json({ suggestions, source: "openai" }, { headers: corsHeaders });
