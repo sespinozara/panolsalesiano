@@ -1285,6 +1285,7 @@ function LoanForm() {
   const [items, setItems] = useState([]);
   const [expectedReturn, setExpectedReturn] = useState(today());
   const [notes, setNotes] = useState("");
+  const [pendingLoan, setPendingLoan] = useState(null);
   const [receipt, setReceipt] = useState(null);
   useEffect(() => {
     setRequesterQuery("");
@@ -1313,35 +1314,43 @@ function LoanForm() {
     setNonReturnable(false);
     setQty(1);
   };
-  const save = () => {
+  const buildLoanDraft = () => {
     const person = selectedRequester || filteredPeople[0];
     if (!person || items.length === 0) return notify("Selecciona solicitante e ítems", "error");
     const reason = getBlockReason(state.loans, requesterType, person.id);
     if (reason) return notify(reason, "error");
     const responsibleTeacher = requesterType === "student" ? (selectedResponsibleTeacher || (teacherQuery ? filteredTeachers[0] : null)) : null;
+    return { requesterType, requesterId: person.id, requesterName: person.name, requesterEmail: person.email || "", responsibleTeacherId: responsibleTeacher?.id || "", responsibleTeacherName: responsibleTeacher?.name || "", responsibleTeacherEmail: responsibleTeacher?.email || "", expectedReturn, notes, items: items.map((item) => ({ ...item })), operatorName: state.settings.operatorName };
+  };
+  const save = () => {
+    const draft = buildLoanDraft();
+    if (draft) setPendingLoan(draft);
+  };
+  const confirmLoan = (draft) => {
     const loanId = uid("pre");
     const loanFolio = nextFolio(state.loans, "PRE");
-    const loanForReceipt = { id: loanId, folio: loanFolio, requesterType, requesterId: person.id, requesterName: person.name, requesterEmail: person.email || "", responsibleTeacherId: responsibleTeacher?.id || "", responsibleTeacherName: responsibleTeacher?.name || "", responsibleTeacherEmail: responsibleTeacher?.email || "", expectedReturn, notes, items, operatorName: state.settings.operatorName };
+    const loanForReceipt = { ...draft, id: loanId, folio: loanFolio };
     dispatch({ type: "CREATE_LOAN", loan: loanForReceipt });
-    if (responsibleTeacher) {
-      const itemLines = items.map((item) => `- ${item.name} | Codigo: ${item.code || "s/c"} | Cantidad: ${item.qty} | ${item.nonReturnable ? "No retorna" : "Debe volver"}`).join("\n");
+    if (draft.responsibleTeacherId) {
+      const itemLines = draft.items.map((item) => `- ${item.name} | Codigo: ${item.code || "s/c"} | Cantidad: ${item.qty} | ${item.nonReturnable ? "No retorna" : "Debe volver"}`).join("\n");
       dispatch({
         type: "SEND_MESSAGE",
         message: {
-          teacherId: responsibleTeacher.id,
-          teacherName: responsibleTeacher.name,
+          teacherId: draft.responsibleTeacherId,
+          teacherName: draft.responsibleTeacherName,
           loanId,
           from: "pañol",
           to: "docente",
           teacherRead: false,
           adminRead: true,
-          body: `Folio prestamo: ${loanFolio}\nPrestamo registrado para alumno: ${person.name}\nFecha entrega: ${formatDate(today())}\nFecha devolucion esperada: ${formatDate(expectedReturn)}\n\nItems:\n${itemLines}\n\nAl finalizar la clase, por favor enviar al alumno al pañol con los materiales que deben volver.${notes ? `\n\nObservaciones: ${notes}` : ""}`,
+          body: `Folio prestamo: ${loanFolio}\nPrestamo registrado para alumno: ${draft.requesterName}\nFecha entrega: ${formatDate(today())}\nFecha devolucion esperada: ${formatDate(draft.expectedReturn)}\n\nItems:\n${itemLines}\n\nAl finalizar la clase, por favor enviar al alumno al pañol con los materiales que deben volver.${draft.notes ? `\n\nObservaciones: ${draft.notes}` : ""}`,
           read: false
         }
       });
     }
     setReceipt({ ...loanForReceipt, createdAt: today() });
-    notify(responsibleTeacher ? "Préstamo registrado y aviso enviado al profesor" : "Préstamo registrado");
+    notify(draft.responsibleTeacherId ? "Préstamo confirmado y aviso enviado al profesor" : "Préstamo confirmado");
+    setPendingLoan(null);
     setItems([]);
     setNotes("");
     setRequesterQuery("");
@@ -1438,8 +1447,89 @@ function LoanForm() {
       )}
       <DataTable rows={items} columns={[["name", "Ítem"], ["code", "Código"], ["type", "Tipo"], ["qty", "Cantidad"], ["returnMode", "Retorno"]]} actions={(row) => <Button variant="ghost" className="px-2 text-red-300" onClick={() => setItems(items.filter((i) => i !== row))}><X size={16} /></Button>} compact />
       <div className="flex justify-end"><Button disabled={Boolean(blockReason)} onClick={save}><ShieldCheck size={16} />Registrar préstamo</Button></div>
+      {pendingLoan && <LoanReviewModal loan={pendingLoan} onClose={() => setPendingLoan(null)} onConfirm={confirmLoan} />}
       {receipt && <ReceiptModal loan={receipt} onClose={() => setReceipt(null)} />}
     </div>
+  );
+}
+
+function LoanReviewModal({ loan, onClose, onConfirm }) {
+  const [draft, setDraft] = useState(loan);
+  const updateItem = (index, patch) => {
+    setDraft({
+      ...draft,
+      items: draft.items.map((item, itemIndex) => (
+        itemIndex === index
+          ? { ...item, ...patch, returnMode: patch.nonReturnable === undefined ? item.returnMode : (patch.nonReturnable ? "No retorna" : "Debe volver") }
+          : item
+      ))
+    });
+  };
+  const removeItem = (index) => {
+    setDraft({ ...draft, items: draft.items.filter((_, itemIndex) => itemIndex !== index) });
+  };
+  const confirm = () => {
+    const cleanItems = draft.items
+      .map((item) => ({
+        ...item,
+        name: String(item.name || "").trim(),
+        code: String(item.code || "").trim(),
+        qty: Math.max(1, Number(item.qty) || 1),
+        returnMode: item.nonReturnable ? "No retorna" : "Debe volver"
+      }))
+      .filter((item) => item.name);
+    if (!cleanItems.length) return;
+    onConfirm({ ...draft, items: cleanItems });
+  };
+  return (
+    <Modal title="Revisar y confirmar préstamo" onClose={onClose} wide>
+      <div className="grid gap-4">
+        <div className="rounded-md border border-safety-500/40 bg-safety-500/10 px-4 py-3 text-sm text-slate-100">
+          Revisa y corrige estos datos antes de generar el préstamo. El stock y el historial se actualizan recién al confirmar.
+        </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          <Field label="Solicitante"><input className={inputClass} value={draft.requesterName} onChange={(event) => setDraft({ ...draft, requesterName: event.target.value })} /></Field>
+          <Field label="Email solicitante"><input className={inputClass} value={draft.requesterEmail || ""} onChange={(event) => setDraft({ ...draft, requesterEmail: event.target.value })} /></Field>
+          <Field label="Fecha devolución"><input className={inputClass} type="date" value={draft.expectedReturn} onChange={(event) => setDraft({ ...draft, expectedReturn: event.target.value })} /></Field>
+          <Field label="Responsable entrega"><input className={inputClass} value={draft.operatorName || ""} onChange={(event) => setDraft({ ...draft, operatorName: event.target.value })} /></Field>
+          {draft.responsibleTeacherName && <Field label="Profesor responsable"><input className={inputClass} value={draft.responsibleTeacherName} onChange={(event) => setDraft({ ...draft, responsibleTeacherName: event.target.value })} /></Field>}
+          <Field label="Observaciones"><input className={inputClass} value={draft.notes || ""} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} placeholder="Uso, taller o módulo" /></Field>
+        </div>
+        <div className="overflow-x-auto rounded-md border border-steel-700">
+          <table className="min-w-[760px] w-full text-sm">
+            <thead className="bg-steel-800 text-left text-xs uppercase tracking-wide text-slate-300">
+              <tr>
+                <th className="px-3 py-3">Ítem</th>
+                <th className="px-3 py-3">Código</th>
+                <th className="px-3 py-3">Cantidad</th>
+                <th className="px-3 py-3">Retorno</th>
+                <th className="px-3 py-3 text-right">Acciones</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-steel-700">
+              {draft.items.map((item, index) => (
+                <tr key={`${item.id}-${index}`} className="bg-steel-900/60">
+                  <td className="px-3 py-2"><input className={inputClass} value={item.name} onChange={(event) => updateItem(index, { name: event.target.value })} /></td>
+                  <td className="px-3 py-2"><input className={inputClass} value={item.code || ""} onChange={(event) => updateItem(index, { code: event.target.value })} /></td>
+                  <td className="px-3 py-2"><input className={inputClass} type="number" min="1" value={item.qty} onChange={(event) => updateItem(index, { qty: Number(event.target.value) || 1 })} /></td>
+                  <td className="px-3 py-2">
+                    <select className={inputClass} value={item.nonReturnable ? "no" : "yes"} onChange={(event) => updateItem(index, { nonReturnable: event.target.value === "no" })}>
+                      <option value="yes">Debe volver</option>
+                      <option value="no">No retorna</option>
+                    </select>
+                  </td>
+                  <td className="px-3 py-2 text-right"><Button variant="ghost" className="px-2 text-red-300" onClick={() => removeItem(index)}><Trash2 size={16} /></Button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button variant="secondary" onClick={onClose}>Volver a editar</Button>
+          <Button onClick={confirm}><ShieldCheck size={16} />Confirmar y generar préstamo</Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
