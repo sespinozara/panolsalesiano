@@ -65,6 +65,7 @@ import "./styles.css";
 const STORAGE_KEY = "panol-educativo-state-v1";
 const PORTAL_SESSION_KEY = "panol-portal-teacher-session";
 const APP_SESSION_KEY = "panol-main-session";
+const APP_VERSION = "v1.0.0";
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 const permissionOptions = [
@@ -733,6 +734,116 @@ function NotificationsBell({ notifications, onMarkRead }) {
   );
 }
 
+function GlobalSearch({ allowedSections = [], onSelect }) {
+  const { state } = useApp();
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const allowed = useMemo(() => new Set(allowedSections), [allowedSections]);
+  const canSee = (section) => allowed.has(section);
+  const results = useMemo(() => {
+    const term = normalizeHeader(query);
+    if (term.length < 2) return [];
+    const matches = (value) => normalizeHeader(String(value || "")).includes(term);
+    const rows = [];
+    if (canSee("people")) {
+      (state.students || []).forEach((student) => {
+        const text = `${student.name} ${student.rut} ${student.course} ${student.email} ${student.phone}`;
+        if (matches(text)) rows.push({ id: `student-${student.id}`, section: "people", type: "Alumno", title: student.name, meta: `${student.course || "Sin curso"} · ${student.email || "sin email"}` });
+      });
+      (state.teachers || []).forEach((teacher) => {
+        const text = `${teacher.name} ${teacher.department} ${teacher.email}`;
+        if (matches(text)) rows.push({ id: `teacher-${teacher.id}`, section: "people", type: "Profesor", title: teacher.name, meta: `${teacher.department || "Sin departamento"} · ${teacher.email || "sin email"}` });
+      });
+    }
+    if (canSee("inventory")) {
+      (state.materials || []).forEach((item) => {
+        const text = `${item.name} ${item.code} ${item.category} ${item.location}`;
+        if (matches(text)) rows.push({ id: `material-${item.id}`, section: "inventory", type: "Material", title: item.name, meta: `${item.code || "sin codigo"} · stock ${item.stock ?? 0} ${item.unit || ""}` });
+      });
+      (state.tools || []).forEach((item) => {
+        const text = `${item.name} ${item.code} ${item.status} ${item.description}`;
+        if (matches(text)) rows.push({ id: `tool-${item.id}`, section: "inventory", type: "Herramienta", title: item.name, meta: `${item.code || "sin codigo"} · ${item.status || "sin estado"}` });
+      });
+    }
+    if (canSee("loans")) {
+      (state.loans || []).forEach((loan) => {
+        const folio = displayFolio(loan, "PRE");
+        const items = (loan.items || []).map((item) => `${item.name} ${item.code}`).join(" ");
+        const text = `${folio} ${loan.requesterName} ${loan.status} ${loan.notes} ${items}`;
+        if (matches(text)) rows.push({ id: `loan-${loan.id}`, section: "loans", type: "Prestamo", title: `${folio} · ${loan.requesterName}`, meta: `${loan.status} · vence ${loan.expectedReturn ? formatDate(loan.expectedReturn) : "sin fecha"}` });
+      });
+    }
+    if (canSee("requests")) {
+      (state.requests || []).forEach((request) => {
+        const folio = displayFolio(request, "SOL");
+        const items = (request.items || []).map((item) => `${item.name} ${item.code}`).join(" ");
+        const text = `${folio} ${request.requesterName} ${request.status} ${request.notes} ${items}`;
+        if (matches(text)) rows.push({ id: `request-${request.id}`, section: "requests", type: "Solicitud", title: `${folio} · ${request.requesterName}`, meta: `${request.status} · ${(request.items || []).length} item(s)` });
+      });
+    }
+    if (canSee("messages")) {
+      (state.messages || []).forEach((msg) => {
+        const text = `${msg.teacherName} ${msg.body} ${msg.requestTitle}`;
+        if (matches(text)) rows.push({ id: `message-${msg.id}`, section: "messages", focusedTeacherId: msg.teacherId, type: "Mensaje", title: msg.teacherName, meta: msg.body });
+      });
+    }
+    if (canSee("invoices")) {
+      (state.invoices || []).forEach((invoice) => {
+        const text = `${invoice.provider} ${invoice.documentName} ${invoice.date}`;
+        if (matches(text)) rows.push({ id: `invoice-${invoice.id}`, section: "invoices", type: "Factura", title: invoice.provider || "Factura", meta: `${invoice.documentName || "sin documento"} · ${invoice.itemsCount || 0} item(s)` });
+      });
+    }
+    return rows.slice(0, 10);
+  }, [allowed, query, state]);
+
+  const selectResult = (result) => {
+    onSelect(result);
+    setQuery("");
+    setOpen(false);
+  };
+
+  return (
+    <div className="global-search relative w-full md:max-w-xl">
+      <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
+      <input
+        className={`${inputClass} h-10 pl-10`}
+        value={query}
+        onChange={(event) => {
+          setQuery(event.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && results[0]) selectResult(results[0]);
+          if (event.key === "Escape") setOpen(false);
+        }}
+        placeholder="Buscar en todo el sistema"
+      />
+      {open && query.length >= 2 && (
+        <div className="absolute left-0 right-0 z-50 mt-2 max-h-96 overflow-auto rounded-lg border border-steel-700 bg-steel-900 p-2 shadow-2xl">
+          {results.length === 0 && <p className="px-3 py-4 text-center text-sm text-slate-400">Sin resultados</p>}
+          {results.map((result) => (
+            <button
+              key={result.id}
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => selectResult(result)}
+              className="w-full rounded-md px-3 py-2 text-left transition hover:bg-steel-800"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <p className="truncate font-semibold text-white">{result.title}</p>
+                <Badge tone="blue">{result.type}</Badge>
+              </div>
+              <p className="mt-1 line-clamp-2 text-xs text-slate-400">{result.meta}</p>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Button({ children, variant = "primary", className = "", ...props }) {
   const variants = {
     primary: "bg-safety-500 text-steel-950 hover:bg-safety-600",
@@ -846,6 +957,10 @@ function Layout({ section, setSection, currentUser, onLogout }) {
             </button>
           ))}
         </nav>
+        <div className="absolute bottom-4 left-4 right-4 rounded-md border border-steel-800 bg-steel-950/60 px-4 py-3 text-xs text-slate-400">
+          <p className="font-semibold text-slate-200">PAÑOL CENTRAL {APP_VERSION}</p>
+          <p>GitHub + Cloudflare activo</p>
+        </div>
       </aside>
       <div className="lg:pl-72">
         <header className="sticky top-0 z-30 border-b border-steel-800 bg-steel-950/92 px-3 py-3 backdrop-blur md:px-8 md:py-4">
@@ -853,7 +968,15 @@ function Layout({ section, setSection, currentUser, onLogout }) {
             <div className="min-w-0">
               <p className="text-sm text-slate-400">Pañol / {titles[section]}</p>
               <h1 className="truncate text-xl font-bold text-white md:text-2xl">{titles[section]}</h1>
+              <p className="text-xs text-slate-500 lg:hidden">PAÑOL CENTRAL {APP_VERSION}</p>
             </div>
+            <GlobalSearch
+              allowedSections={currentUser?.permissions || []}
+              onSelect={(result) => {
+                if (result.focusedTeacherId) setFocusedTeacherId(result.focusedTeacherId);
+                setSection(result.section);
+              }}
+            />
             <div className="mobile-actions flex flex-wrap items-center gap-2">
               <span className="hidden text-sm text-slate-400 md:inline">{currentUser?.name}</span>
               <NotificationsBell notifications={adminNotifications} onMarkRead={() => dispatch({ type: "MARK_ADMIN_NOTIFICATIONS_READ" })} />
