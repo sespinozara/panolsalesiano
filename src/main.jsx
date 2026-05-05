@@ -1526,6 +1526,43 @@ const configs = {
   tools: { title: "Herramientas", icon: Hammer, prefix: "her", fields: [["name", "Nombre"], ["code", "Código"], ["status", "Estado"], ["description", "Descripción"]], columns: [["name", "Nombre"], ["code", "Código"], ["status", "Estado"], ["description", "Descripción"]] }
 };
 
+const inferCodePrefix = (collection, category = "") => {
+  if (collection === "tools") return "HER";
+  const normalized = normalizeHeader(category);
+  if (normalized.includes("herramient")) return "HER";
+  if (normalized.includes("maqueta")) return "MAQ";
+  if (normalized.includes("instrument")) return "INS";
+  if (normalized.includes("fungible")) return "FUN";
+  if (normalized.includes("epp") || normalized.includes("seguridad")) return "EPP";
+  if (normalized.includes("electr")) return "ELE";
+  return "MAT";
+};
+
+function generateEntityCode(state, collection, row = {}) {
+  const list = state[collection] || [];
+  const category = row.category || "";
+  const normalizedCategory = normalizeHeader(category);
+  const sameCategory = collection === "materials" && normalizedCategory
+    ? list.filter((item) => normalizeHeader(item.category || "") === normalizedCategory)
+    : list;
+  const prefixCounts = sameCategory.reduce((acc, item) => {
+    const match = String(item.code || "").trim().match(/^([A-Z]+)-?(\d+)$/i);
+    if (!match) return acc;
+    const prefix = match[1].toUpperCase();
+    acc[prefix] = (acc[prefix] || 0) + 1;
+    return acc;
+  }, {});
+  const detectedPrefix = Object.entries(prefixCounts).sort((a, b) => b[1] - a[1])[0]?.[0];
+  const prefix = detectedPrefix || inferCodePrefix(collection, category);
+  const codesWithPrefix = list
+    .map((item) => String(item.code || "").trim().match(new RegExp(`^${prefix}-?(\\d+)$`, "i")))
+    .filter(Boolean)
+    .map((match) => Number(match[1]))
+    .filter(Number.isFinite);
+  const nextNumber = (codesWithPrefix.length ? Math.max(...codesWithPrefix) : 0) + 1;
+  return `${prefix}-${String(nextNumber).padStart(4, "0")}`;
+}
+
 function People() {
   const [tab, setTab] = useState("students");
   const config = configs[tab];
@@ -1608,7 +1645,8 @@ function CrudTable({ collection, config }) {
   const pageRows = rows.slice((page - 1) * perPage, page * perPage);
   const pages = Math.max(1, Math.ceil(rows.length / perPage));
   const save = (row) => {
-    dispatch({ type: "UPSERT_ENTITY", collection, prefix: config.prefix, row });
+    const finalRow = row.code ? row : { ...row, code: generateEntityCode(state, collection, row) };
+    dispatch({ type: "UPSERT_ENTITY", collection, prefix: config.prefix, row: finalRow });
     notify(`${config.title.slice(0, -1) || config.title} guardado`);
     setEditing(null);
   };
@@ -1627,7 +1665,7 @@ function CrudTable({ collection, config }) {
       )} />
       <Pager page={page} pages={pages} setPage={setPage} />
       {profile && <PersonProfileModal person={profile} type={collection === "students" ? "student" : "teacher"} onClose={() => setProfile(null)} />}
-      {editing && <EditEntityModal config={config} initial={editing} onClose={() => setEditing(null)} onSave={save} />}
+      {editing && <EditEntityModal collection={collection} config={config} initial={editing} onClose={() => setEditing(null)} onSave={save} />}
       {deleting && <ConfirmModal title="Confirmar eliminación" body={`Se eliminará "${deleting.name}". Esta acción no se puede deshacer.`} onCancel={() => setDeleting(null)} onConfirm={() => { dispatch({ type: "DELETE_ENTITY", collection, id: deleting.id }); notify("Registro eliminado"); setDeleting(null); }} />}
     </div>
   );
@@ -1671,13 +1709,31 @@ function PersonProfileModal({ person, type, onClose }) {
   );
 }
 
-function EditEntityModal({ config, initial, onClose, onSave }) {
+function EditEntityModal({ collection, config, initial, onClose, onSave }) {
+  const { state } = useApp();
   const [form, setForm] = useState(initial);
+  const [codeTouched, setCodeTouched] = useState(Boolean(initial.code));
+  const hasCode = config.fields.some(([key]) => key === "code");
+  const suggestedCode = hasCode ? generateEntityCode(state, collection, form) : "";
+  useEffect(() => {
+    if (initial.id || !hasCode || codeTouched) return;
+    setForm((current) => ({ ...current, code: generateEntityCode(state, collection, current) }));
+  }, [collection, form.category, hasCode, initial.id, codeTouched, state]);
   return (
     <Modal title={initial.id ? "Editar registro" : "Agregar registro"} onClose={onClose}>
       <div className="grid gap-4 md:grid-cols-2">
         {config.fields.map(([key, label, type]) => key === "status" ? (
           <Field key={key} label={label}><select className={inputClass} value={form[key] || "disponible"} onChange={(e) => setForm({ ...form, [key]: e.target.value })}><option>disponible</option><option>en préstamo</option><option>en reparación</option><option>dañado</option><option>perdido</option><option>dado de baja</option></select></Field>
+        ) : key === "code" ? (
+          <Field key={key} label={label}>
+            <div className="grid gap-2">
+              <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                <input className={inputClass} value={form[key] || ""} onChange={(e) => { setCodeTouched(true); setForm({ ...form, [key]: e.target.value.toUpperCase() }); }} placeholder={suggestedCode} />
+                {!initial.id && <Button variant="secondary" onClick={() => { setCodeTouched(false); setForm({ ...form, code: suggestedCode }); }}><RotateCcw size={16} />Auto</Button>}
+              </div>
+              {!initial.id && <p className="text-xs text-slate-400">Sugerido automáticamente según categoría: <span className="font-semibold text-white">{suggestedCode}</span></p>}
+            </div>
+          </Field>
         ) : (
           <Field key={key} label={label}><input className={inputClass} type={type || "text"} value={form[key] || ""} onChange={(e) => setForm({ ...form, [key]: type === "number" ? Number(e.target.value) : e.target.value })} /></Field>
         ))}
