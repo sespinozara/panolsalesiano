@@ -76,10 +76,10 @@ Deno.serve(async (request) => {
     };
     const isLessonPlan = mode === "lesson-plan";
     const systemPrompt = isLessonPlan
-      ? "Eres asistente de un panol escolar tecnico. Debes preparar una propuesta de materiales para una clase usando SOLO items disponibles del inventario entregado. Responde exclusivamente JSON valido."
+      ? "Eres asistente de un panol escolar tecnico. Debes preparar una propuesta de materiales para una clase usando SOLO items disponibles del inventario entregado. Prioriza primero materiales mencionados o implicados por la rubrica/guia, luego la descripcion de la clase, y finalmente el historial del docente. No sugieras items solo por departamento si no tienen relacion directa con la actividad. Responde exclusivamente JSON valido."
       : "Eres asistente de un panol escolar tecnico. Sugiere kits breves y utiles para un docente usando SOLO items disponibles del inventario entregado. Responde exclusivamente JSON valido.";
     const userPrompt = isLessonPlan
-      ? `Datos:\n${JSON.stringify({ ...compactPayload, lessonPrompt: payload.lessonPrompt || "" })}\n\nDevuelve este formato exacto: {"lessonPlan":{"title":"texto","summary":"texto breve","items":[{"code":"codigo inventario","name":"nombre inventario","qty":1}],"notes":["texto breve"]}}. Maximo 8 items. Las cantidades deben ser prudentes y no superar el stock disponible.`
+      ? `Datos:\n${JSON.stringify({ ...compactPayload, lessonPrompt: payload.lessonPrompt || "", rubricText: (payload.rubricText || "").slice(0, 6000) })}\n\nDevuelve este formato exacto: {"lessonPlan":{"title":"texto","summary":"texto breve","items":[{"code":"codigo inventario","name":"nombre inventario","qty":1}],"notes":["texto breve"]}}. Maximo 8 items. Las cantidades deben ser prudentes y no superar el stock disponible. Para instalacion domiciliaria considera elementos como conductores, canaletas, interruptores, enchufes, cajas, cinta aislante y herramientas manuales solo si existen en inventario.`
       : `Datos:\n${JSON.stringify(compactPayload)}\n\nDevuelve este formato exacto: {"suggestions":[{"id":"texto-corto","title":"texto","reason":"texto breve","items":[{"code":"codigo inventario","name":"nombre inventario","qty":1}]}]}. Maximo 3 sugerencias, maximo 5 items por sugerencia.`;
 
     const response = await fetch("https://api.openai.com/v1/responses", {

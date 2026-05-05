@@ -2546,6 +2546,13 @@ async function readPdfText(file) {
   }
 }
 
+async function readLessonContextFile(file) {
+  if (!file) return "";
+  if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) return readPdfText(file);
+  if (file.type.startsWith("text/") || /\.(txt|csv|md)$/i.test(file.name)) return file.text();
+  throw new Error("Formato no soportado");
+}
+
 function groupPdfTextRows(items) {
   const rows = [];
   items.filter((item) => item.str?.trim()).forEach((item) => {
@@ -3275,8 +3282,9 @@ function findLessonInventoryItem(available, keywords, usedKeys) {
     .sort((a, b) => b.lessonScore - a.lessonScore || Number(b.stock) - Number(a.stock))[0];
 }
 
-function buildLocalLessonPlan({ prompt, teacher, inventory }) {
-  const normalizedPrompt = normalizeHeader(prompt);
+function buildLocalLessonPlan({ prompt, rubricText = "", teacher, inventory }) {
+  const combinedPrompt = `${prompt}\n${rubricText}`.slice(0, 6000);
+  const normalizedPrompt = normalizeHeader(combinedPrompt);
   const students = parseStudentCount(prompt);
   const available = inventory.filter((item) => Number(item.stock) > 0);
   const usedKeys = new Set();
@@ -3295,7 +3303,19 @@ function buildLocalLessonPlan({ prompt, teacher, inventory }) {
   const isArduino = /arduino|program|robot|sensor|wifi|esp/.test(normalizedPrompt);
   const isMeasurement = /medic|tester|multimetro|voltimetro|amperimetro/.test(normalizedPrompt);
   const isWorkshop = /seguridad|epp|taller|herramient|mecan|maqueta|constru/.test(normalizedPrompt);
+  const isHomeInstallation = /instalacion domiciliaria|domiciliaria|canaleta|enchufe|interruptor|alumbrado|tablero|empalme|conductor|fase|neutro|tierra|caja derivacion|caja chuqui|caja electrica/.test(normalizedPrompt);
 
+  if (isHomeInstallation) {
+    addMatch(["cable", "alambre", "conductor", "thhn", "nylon"], ({ students }) => students * 3);
+    addMatch(["canaleta"], ({ students }) => Math.ceil(students / 2));
+    addMatch(["interruptor"], ({ students }) => Math.ceil(students / 2));
+    addMatch(["enchufe", "tomacorriente"], ({ students }) => Math.ceil(students / 2));
+    addMatch(["caja", "derivacion", "chuqui"], ({ students }) => Math.ceil(students / 2));
+    addMatch(["huincha", "metro"], ({ stock }) => Math.min(3, stock));
+    addMatch(["destornillador"], ({ stock }) => Math.min(3, stock));
+    addMatch(["alicate"], ({ stock }) => Math.min(3, stock));
+    addMatch(["cinta aislante"], ({ students }) => Math.ceil(students / 3));
+  }
   if (isArduino) {
     addMatch(["arduino", "uno"], ({ students, stock }) => Math.min(Math.ceil(students / 4), stock));
     addMatch(["protoboard", "breadboard"], ({ students }) => Math.ceil(students / 2));
@@ -3319,7 +3339,7 @@ function buildLocalLessonPlan({ prompt, teacher, inventory }) {
     addMatch(["destornillador"], ({ stock }) => Math.min(6, stock));
   }
   if (!items.length) {
-    const departmentWords = normalizeHeader(`${teacher.department || ""} ${prompt}`).split(" ").filter((word) => word.length > 3);
+    const departmentWords = normalizeHeader(`${teacher.department || ""} ${combinedPrompt}`).split(" ").filter((word) => word.length > 3);
     available
       .map((item) => {
         const haystack = normalizeHeader(`${item.name} ${item.category || ""} ${item.description || ""}`);
@@ -3389,6 +3409,9 @@ function TeacherWorkspace({ currentUser, onLogout }) {
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   const [suggestionsSource, setSuggestionsSource] = useState("local");
   const [lessonPrompt, setLessonPrompt] = useState("");
+  const [lessonRubricText, setLessonRubricText] = useState("");
+  const [lessonRubricName, setLessonRubricName] = useState("");
+  const [lessonRubricLoading, setLessonRubricLoading] = useState(false);
   const [lessonPlan, setLessonPlan] = useState(null);
   const [lessonLoading, setLessonLoading] = useState(false);
   const [lessonSource, setLessonSource] = useState("local");
@@ -3485,7 +3508,7 @@ function TeacherWorkspace({ currentUser, onLogout }) {
   };
   const prepareLesson = async () => {
     if (!lessonPrompt.trim()) return notify("Describe la clase que quieres preparar", "error");
-    const localPlan = buildLocalLessonPlan({ prompt: lessonPrompt, teacher, inventory: fullInventory });
+    const localPlan = buildLocalLessonPlan({ prompt: lessonPrompt, rubricText: lessonRubricText, teacher, inventory: fullInventory });
     setLessonPlan(localPlan);
     setLessonSource("local");
     if (!isSupabaseConfigured || !supabase) return;
@@ -3495,6 +3518,7 @@ function TeacherWorkspace({ currentUser, onLogout }) {
         body: {
           mode: "lesson-plan",
           lessonPrompt,
+          rubricText: lessonRubricText.slice(0, 6000),
           teacher: { name: teacher.name, department: teacher.department || "", email: teacher.email || "" },
           inventory: fullInventory.slice(0, 400).map((item) => ({ id: item.id, type: item.type, name: item.name, code: item.code, category: item.category, stock: item.stock, unit: item.unit, status: item.status })),
           recentRequests: myRequests.slice(-10).map((request) => ({ status: request.status, items: request.items, notes: request.notes })),
@@ -3514,6 +3538,21 @@ function TeacherWorkspace({ currentUser, onLogout }) {
   const addLessonPlanToCart = () => {
     if (!lessonPlan?.items?.length) return notify("No hay items sugeridos para agregar", "error");
     addSuggestionKit({ title: lessonPlan.title, items: lessonPlan.items });
+  };
+  const loadLessonRubric = async (file) => {
+    if (!file) return;
+    setLessonRubricLoading(true);
+    try {
+      const text = await readLessonContextFile(file);
+      if (!text.trim()) throw new Error("Sin texto legible");
+      setLessonRubricText(text.slice(0, 8000));
+      setLessonRubricName(file.name);
+      notify("Rúbrica agregada como contexto");
+    } catch (error) {
+      notify("No pude leer esa rúbrica. Prueba con PDF con texto o pega el contenido manualmente.", "error");
+    } finally {
+      setLessonRubricLoading(false);
+    }
   };
   useEffect(() => {
     setSmartSuggestions(buildLocalTeacherSuggestions({ teacher, inventory: fullInventory, requests: myRequests, cart }));
@@ -3614,6 +3653,14 @@ function TeacherWorkspace({ currentUser, onLogout }) {
               <div className="grid gap-3 xl:grid-cols-[1fr_auto]">
                 <textarea className={`${inputClass} min-h-24 resize-y`} value={lessonPrompt} onChange={(e) => setLessonPrompt(e.target.value)} placeholder="Ej: clase de circuitos en serie para 2 medio, 30 alumnos" />
                 <Button onClick={prepareLesson} disabled={lessonLoading} className="self-start xl:self-stretch"><Wand2 size={16} />{lessonLoading ? "Preparando..." : "Preparar carrito"}</Button>
+              </div>
+              <div className="grid gap-3 xl:grid-cols-[minmax(260px,380px)_1fr]">
+                <Field label="Rúbrica o guía de actividad">
+                  <input className={inputClass} type="file" accept=".pdf,.txt,.md,.csv,text/plain,application/pdf" onChange={(e) => loadLessonRubric(e.target.files?.[0])} disabled={lessonRubricLoading} />
+                </Field>
+                <Field label={lessonRubricName ? `Contexto cargado: ${lessonRubricName}` : "Contexto manual opcional"}>
+                  <textarea className={`${inputClass} min-h-20 resize-y`} value={lessonRubricText} onChange={(e) => { setLessonRubricText(e.target.value); if (!e.target.value) setLessonRubricName(""); }} placeholder="Pega aquí objetivos, indicadores, materiales mencionados o restricciones de la rúbrica" />
+                </Field>
               </div>
               {lessonPlan && (
                 <div className="rounded-md border border-sky-500/40 bg-sky-500/10 p-4">
