@@ -1933,8 +1933,6 @@ function TeacherPortal() {
   };
   const submit = () => {
     if (!teacher || !items.length) return notify("Agrega ítems a la solicitud", "error");
-    const reason = getBlockReason(state.loans, "teacher", teacher.id);
-    if (reason) return notify(reason, "error");
     dispatch({ type: "CREATE_REQUEST", request: { requesterType: "teacher", requesterId: teacher.id, requesterName: teacher.name, requesterEmail: teacher.email || "", department: teacher.department || "", expectedDate, notes, items } });
     notify("Solicitud enviada al pañol");
     setItems([]);
@@ -3350,6 +3348,24 @@ function buildLocalLessonPlan({ prompt, teacher, inventory }) {
   };
 }
 
+function getTeacherPendingReturnLoans(loans = [], teacher = {}) {
+  return loans
+    .filter((loan) => loan.status === "activo")
+    .filter((loan) => (loan.requesterType === "teacher" && loan.requesterId === teacher.id) || loan.responsibleTeacherId === teacher.id)
+    .map((loan) => {
+      const returnableItems = (loan.items || []).filter((item) => !item.nonReturnable);
+      return {
+        ...loan,
+        folioText: displayFolio(loan, "PRE"),
+        returnableItems,
+        itemsText: returnableItems.map((item) => `${item.name} (${item.qty})`).join(", "),
+        dueText: isOverdue(loan) ? `${overdueDays(loan.expectedReturn)} dia(s) de atraso` : `vence ${formatDate(loan.expectedReturn)}`,
+        relatedTo: loan.requesterType === "teacher" ? "Prestamo directo al docente" : `Prestamo retirado por ${loan.requesterName}`
+      };
+    })
+    .filter((loan) => loan.returnableItems.length > 0);
+}
+
 function statefulNameScore(name, requests) {
   const normalizedName = normalizeHeader(name);
   return requests.reduce((score, request) => score + (request.items || []).filter((item) => normalizeHeader(item.name) === normalizedName).length, 0);
@@ -3376,6 +3392,7 @@ function TeacherWorkspace({ currentUser, onLogout }) {
   const [lessonPlan, setLessonPlan] = useState(null);
   const [lessonLoading, setLessonLoading] = useState(false);
   const [lessonSource, setLessonSource] = useState("local");
+  const [returnReminderOpen, setReturnReminderOpen] = useState(true);
   const inventory = [
     ...state.materials.map((item) => ({ ...item, type: "material", statusText: `${item.stock} ${item.unit}` })),
     ...state.tools.map((item) => ({ ...item, type: "tool", category: "Herramientas", stock: item.status === "disponible" ? 1 : 0, statusText: item.status }))
@@ -3387,6 +3404,8 @@ function TeacherWorkspace({ currentUser, onLogout }) {
   const myRequests = (state.requests || []).filter((request) => request.requesterId === teacher.id);
   const myMessages = (state.messages || []).filter((msg) => msg.teacherId === teacher.id).sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
   const unreadTeacherMessagesCount = myMessages.filter((msg) => msg.from === "pañol" && !msg.teacherRead).length;
+  const pendingReturnLoans = getTeacherPendingReturnLoans(state.loans || [], teacher);
+  const pendingReturnItemsCount = pendingReturnLoans.reduce((total, loan) => total + loan.returnableItems.reduce((sum, item) => sum + Number(item.qty || 1), 0), 0);
   const pendingRequests = myRequests.filter((request) => request.status === "pendiente");
   const readyRequests = myRequests.filter((request) => ["preparada", "entregada"].includes(request.status));
   const recentRequests = [...myRequests].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).slice(0, 4);
@@ -3500,6 +3519,9 @@ function TeacherWorkspace({ currentUser, onLogout }) {
     setSmartSuggestions(buildLocalTeacherSuggestions({ teacher, inventory: fullInventory, requests: myRequests, cart }));
     setSuggestionsSource("local");
   }, [teacher.id, state.requests.length, state.materials.length, state.tools.length]);
+  useEffect(() => {
+    setReturnReminderOpen(true);
+  }, [teacher.id]);
   const submitRequest = () => {
     if (!cart.length) return notify("Agrega ítems al carrito", "error");
     dispatch({ type: "CREATE_REQUEST", request: { requesterType: "teacher", requesterId: teacher.id, requesterName: teacher.name, requesterEmail: teacher.email || "", department: teacher.department || "", expectedDate, notes, items: cart } });
@@ -3537,6 +3559,41 @@ function TeacherWorkspace({ currentUser, onLogout }) {
           <div className="cart-added-banner rounded-md border border-sky-500/60 bg-sky-500/15 px-4 py-3 text-sm font-semibold text-sky-100">
             <Check className="mr-2 inline" size={16} />Agregado al carrito: {lastAdded}
           </div>
+        )}
+        {pendingReturnLoans.length > 0 && returnReminderOpen && (
+          <Modal title="ATENTO: devoluciones pendientes" onClose={() => setReturnReminderOpen(false)} wide>
+            <div className="grid gap-4">
+              <div className="rounded-md border border-red-500/50 bg-red-500/10 p-4">
+                <p className="text-lg font-bold text-red-100">ATENTO ! recuerda bajar estos elementos a pañol lo antes posible!</p>
+                <p className="mt-1 text-sm text-red-100/80">Tienes {pendingReturnItemsCount} elemento(s) pendiente(s) de devolución asociados a {pendingReturnLoans.length} préstamo(s). El servicio sigue habilitado, pero el pañol necesita cerrar estas entregas.</p>
+              </div>
+              <div className="grid max-h-[55vh] gap-3 overflow-auto pr-1">
+                {pendingReturnLoans.map((loan) => (
+                  <div key={loan.id} className={`rounded-md border p-4 ${isOverdue(loan) ? "border-red-500/50 bg-red-500/10" : "border-amber-500/45 bg-amber-500/10"}`}>
+                    <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                      <div>
+                        <p className="font-bold text-white">{loan.folioText} · {loan.relatedTo}</p>
+                        <p className="text-sm text-slate-300">Fecha devolución: {formatDate(loan.expectedReturn)} · {loan.dueText}</p>
+                      </div>
+                      <Badge tone={isOverdue(loan) ? "red" : "amber"}>{isOverdue(loan) ? "vencido" : "pendiente"}</Badge>
+                    </div>
+                    <div className="mt-3 grid gap-2 md:grid-cols-2">
+                      {loan.returnableItems.map((item) => (
+                        <div key={`${loan.id}-${item.type}-${item.id}`} className="rounded-md border border-steel-700 bg-steel-900/80 px-3 py-2">
+                          <p className="font-semibold text-slate-100">{item.name}</p>
+                          <p className="text-xs text-slate-400">{item.code || "s/c"} · cantidad {item.qty}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button variant="secondary" onClick={() => { setReturnReminderOpen(false); setChatOpen(true); }}><MessageSquare size={16} />Consultar al pañol</Button>
+                <Button onClick={() => setReturnReminderOpen(false)}><Check size={16} />Entendido</Button>
+              </div>
+            </div>
+          </Modal>
         )}
         {tab === "home" && (
           <div className="grid gap-4">
