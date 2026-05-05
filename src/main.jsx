@@ -3993,9 +3993,9 @@ function TeacherWorkspace({ currentUser, onLogout }) {
                     </div>
                     <div className="mt-3 grid gap-2 md:grid-cols-2">
                       {loan.returnableItems.map((item) => (
-                        <div key={`${loan.id}-${item.type}-${item.id}`} className="rounded-md border border-steel-700 bg-steel-900/80 px-3 py-2">
-                          <p className="font-semibold text-slate-100">{item.name}</p>
-                          <p className="text-xs text-slate-400">{item.code || "s/c"} · cantidad {item.qty}</p>
+                        <div key={`${loan.id}-${item.type}-${item.id}`} className="border-l-4 border-red-500 px-3 py-1.5">
+                          <p className="font-extrabold text-red-700 dark:text-red-200">{item.name}</p>
+                          <p className="text-xs font-bold text-red-600 dark:text-red-300">{item.code || "s/c"} · cantidad {item.qty}</p>
                         </div>
                       ))}
                     </div>
