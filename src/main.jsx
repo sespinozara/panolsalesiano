@@ -70,12 +70,14 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 const permissionOptions = [
   ["dashboard", "Dashboard"],
+  ["alerts", "Centro de alertas"],
   ["people", "Personas"],
   ["inventory", "Inventario"],
   ["loans", "Entrega y recepción"],
   ["requests", "Solicitudes docentes"],
   ["messages", "Mensajes"],
   ["assistant", "Asistente IA"],
+  ["audit", "Bitácora"],
   ["invoices", "Facturas"],
   ["database", "Bases de datos"],
   ["reports", "Reportes"],
@@ -893,12 +895,14 @@ function Layout({ section, setSection, currentUser, onLogout }) {
   const [focusedTeacherId, setFocusedTeacherId] = useState("");
   const nav = [
     ["dashboard", "Dashboard", LayoutDashboard],
+    ["alerts", "Centro de alertas", Bell],
     ["people", "Personas", UsersRound],
     ["inventory", "Inventario", Boxes],
     ["loans", "Entrega y recepción", ClipboardList],
     ["requests", "Solicitudes docentes", Inbox],
     ["messages", "Mensajes", MessageSquare],
     ["assistant", "Asistente IA", Wand2],
+    ["audit", "Bitácora", History],
     ["invoices", "Facturas", ReceiptText],
     ["database", "Bases de datos", Database],
     ["reports", "Reportes", BarChart3],
@@ -906,12 +910,14 @@ function Layout({ section, setSection, currentUser, onLogout }) {
   ];
   const titles = {
     dashboard: "Dashboard principal",
+    alerts: "Centro de alertas",
     people: "Alumnos y profesores",
     inventory: "Materiales y herramientas",
     loans: "Entrega y recepción",
     requests: "Solicitudes docentes",
     messages: "Mensajes",
     assistant: "Asistente IA",
+    audit: "Bitácora",
     invoices: "Carga de facturas",
     database: "Carga de bases de datos",
     reports: "Reportes",
@@ -921,7 +927,14 @@ function Layout({ section, setSection, currentUser, onLogout }) {
   const pendingRequestsCount = (state.requests || []).filter((request) => request.status === "pendiente").length;
   const unreadMessagesCount = (state.messages || []).filter((msg) => msg.from === "docente" && !msg.adminRead).length;
   const preparingRequestsCount = (state.requests || []).filter((request) => request.status === "en preparación").length;
+  const criticalAdminAlerts = buildAdminAlerts(state).filter((alert) => ["crítica", "media"].includes(alert.priority) && alert.rows?.length).slice(0, 5);
   const adminNotifications = [
+    ...criticalAdminAlerts.map((alert) => ({
+      title: alert.title,
+      body: alert.body,
+      actionLabel: alert.actionLabel || "Abrir alerta",
+      onOpen: () => setSection(alert.section || "alerts")
+    })),
     ...(state.requests || []).filter((request) => request.status === "pendiente").map((request) => ({
       title: "Solicitud docente pendiente",
       body: `${request.requesterName}: ${request.items.length} item(s)`,
@@ -999,7 +1012,7 @@ function Layout({ section, setSection, currentUser, onLogout }) {
           </div>
         </header>
         <main className="app-main p-3 md:p-8">
-          {(pendingRequestsCount > 0 || unreadMessagesCount > 0 || preparingRequestsCount > 0) && (
+          {state.settings.showAdminAlertStrip !== false && (pendingRequestsCount > 0 || unreadMessagesCount > 0 || preparingRequestsCount > 0) && (
             <div className="admin-alert-strip mb-4 grid gap-2 rounded-lg border border-safety-500/40 bg-safety-500/10 p-3 text-sm text-slate-100 md:grid-cols-[1fr_auto] md:items-center">
               <div className="flex flex-wrap gap-2">
                 {pendingRequestsCount > 0 && <Badge tone="amber">{pendingRequestsCount} solicitud(es) pendiente(s)</Badge>}
@@ -1013,12 +1026,14 @@ function Layout({ section, setSection, currentUser, onLogout }) {
             </div>
           )}
           {section === "dashboard" && currentUser?.permissions?.includes("dashboard") && <Dashboard />}
+          {section === "alerts" && <AdminAlertsCenter setSection={setSection} />}
           {section === "people" && <People />}
           {section === "inventory" && <Inventory />}
           {section === "loans" && <Loans />}
           {section === "requests" && <TeacherRequestsInbox />}
           {section === "messages" && <MessagesCenter focusedTeacherId={focusedTeacherId} />}
           {section === "assistant" && <AdminAssistant />}
+          {section === "audit" && <BackupAuditPanel />}
           {section === "invoices" && <Invoices />}
           {section === "database" && <DatabaseImport />}
           {section === "reports" && <Reports />}
@@ -1031,6 +1046,70 @@ function Layout({ section, setSection, currentUser, onLogout }) {
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+function AdminAlertsCenter({ setSection }) {
+  const { state } = useApp();
+  const [detail, setDetail] = useState(null);
+  const alerts = buildAdminAlerts(state);
+  const priorityTone = { crítica: "red", media: "amber", informativa: "blue", ok: "green" };
+  const visibleAlerts = alerts.filter((alert) => alert.priority !== "ok" || alert.id === "messages");
+  const grouped = [
+    ["crítica", visibleAlerts.filter((alert) => alert.priority === "crítica")],
+    ["media", visibleAlerts.filter((alert) => alert.priority === "media")],
+    ["informativa", visibleAlerts.filter((alert) => alert.priority === "informativa" || alert.priority === "ok")]
+  ];
+  return (
+    <div className="grid gap-5">
+      <section className="panel grid gap-4">
+        <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h2 className="section-title"><Bell size={18} />Centro de alertas operativo</h2>
+            <p className="text-sm text-slate-400">Prioriza vencimientos, stock crítico, solicitudes docentes y mensajes pendientes en un solo lugar.</p>
+          </div>
+          <Badge tone="amber">{visibleAlerts.filter((alert) => alert.rows?.length).length} foco(s) activo(s)</Badge>
+        </div>
+        <div className="grid gap-4">
+          {grouped.map(([priority, items]) => (
+            <div key={priority} className="grid gap-3">
+              <div className="flex items-center gap-2">
+                <Badge tone={priorityTone[priority]}>{priority}</Badge>
+                <span className="text-sm text-slate-400">{items.length} alerta(s)</span>
+              </div>
+              <div className="grid gap-3 xl:grid-cols-2">
+                {items.length === 0 && <div className="rounded-md border border-steel-700 bg-steel-850 p-4 text-sm text-slate-400">Sin alertas en este nivel.</div>}
+                {items.map((alert) => (
+                  <div key={alert.id} className="rounded-md border border-steel-700 bg-steel-850 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-bold text-white">{alert.title}</p>
+                        <p className="mt-1 text-sm text-slate-400">{alert.body}</p>
+                      </div>
+                      <Badge tone={priorityTone[alert.priority] || "slate"}>{alert.rows?.length || 0}</Badge>
+                    </div>
+                    <div className="mt-4 flex flex-wrap justify-end gap-2">
+                      {alert.rows?.length > 0 && <Button variant="secondary" onClick={() => setDetail(alert)}><FileText size={16} />Ver detalle</Button>}
+                      <Button onClick={() => setSection(alert.section || "dashboard")}>{alert.actionLabel || "Abrir"}</Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+      {detail && (
+        <Modal title={detail.title} onClose={() => setDetail(null)} wide>
+          <p className="mb-4 text-sm text-slate-400">{detail.body}</p>
+          <DataTable rows={detail.rows || []} columns={detail.columns || []} compact />
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setDetail(null)}>Cerrar</Button>
+            <Button onClick={() => { setDetail(null); setSection(detail.section || "dashboard"); }}>{detail.actionLabel || "Abrir módulo"}</Button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -1227,6 +1306,18 @@ function localAdminQuestionAnswer(state, question) {
   const text = normalizeHeader(question);
   const context = buildAdminAiContext(state);
   if (!question.trim()) return null;
+  if (text.includes("urgencia") || text.includes("hoy")) {
+    const alerts = buildAdminAlerts(state).filter((alert) => alert.rows?.length);
+    return { title: "Urgencias para hoy", summary: alerts.length ? `Detecté ${alerts.length} foco(s) operativos que conviene revisar.` : "No hay urgencias críticas registradas.", bullets: alerts.slice(0, 8).map((alert) => `${alert.title}: ${alert.body}`) };
+  }
+  if (text.includes("reponer") || text.includes("comprar") || text.includes("stock")) {
+    const items = state.materials.filter((item) => Number(item.stock || 0) < Number(item.minStock || 0)).sort((a, b) => (Number(a.stock || 0) - Number(a.minStock || 0)) - (Number(b.stock || 0) - Number(b.minStock || 0)));
+    return { title: "Reposición sugerida", summary: items.length ? `${items.length} material(es) están bajo mínimo.` : "No detecté materiales bajo mínimo.", bullets: items.slice(0, 12).map((item) => `${item.name} (${item.code || "s/c"}): stock ${item.stock}, mínimo ${item.minStock}`) };
+  }
+  if (text.includes("sin respuesta") || text.includes("solicitudes docentes")) {
+    const pending = (state.requests || []).filter((request) => ["pendiente", "en preparación"].includes(request.status));
+    return { title: "Solicitudes que requieren gestión", summary: pending.length ? `${pending.length} solicitud(es) pendientes o en preparación.` : "No hay solicitudes docentes pendientes.", bullets: pending.slice(0, 12).map((request) => `${displayFolio(request, "SOL")} · ${request.requesterName} · ${request.status} · ${request.items.length} ítem(s)`) };
+  }
   if (text.includes("venc") || text.includes("atras")) {
     return { title: "Préstamos vencidos", summary: context.overdue.length ? `Hay ${context.overdue.length} préstamo(s) vencidos.` : "No hay préstamos vencidos.", bullets: context.overdue.slice(0, 10).map((loan) => `${displayFolio(loan, "PRE")} · ${loan.requesterName} · ${overdueDays(loan.expectedReturn)} día(s) de atraso`) };
   }
@@ -1249,21 +1340,128 @@ function localAdminQuestionAnswer(state, question) {
   return localAdminLoanAnalysis(state);
 }
 
+function buildAdminAlerts(state) {
+  const dueSoonDays = Number(state.settings?.loanDueSoonDays ?? 2);
+  const dueLimit = addDays(dueSoonDays);
+  const activeLoans = state.loans.filter((loan) => loan.status === "activo");
+  const overdue = activeLoans.filter(isOverdue);
+  const dueSoon = activeLoans.filter((loan) => !isOverdue(loan) && loan.expectedReturn <= dueLimit);
+  const zeroStock = state.materials.filter((item) => Number(item.stock || 0) <= 0);
+  const lowStock = state.materials.filter((item) => Number(item.stock || 0) > 0 && Number(item.stock || 0) < Number(item.minStock || state.settings.criticalThreshold || 0));
+  const pendingRequests = (state.requests || []).filter((request) => request.status === "pendiente");
+  const preparingRequests = (state.requests || []).filter((request) => request.status === "en preparación");
+  const unreadMessages = (state.messages || []).filter((msg) => msg.from === "docente" && !msg.adminRead);
+  const unavailableTools = state.tools.filter((tool) => tool.status !== "disponible");
+  const blockedPeople = [
+    ...state.students.map((person) => ({ ...person, typeLabel: "Alumno", requesterType: "student" })),
+    ...state.teachers.map((person) => ({ ...person, typeLabel: "Profesor", requesterType: "teacher" }))
+  ].map((person) => ({ ...person, blockReason: getBlockReason(state.loans, person.requesterType, person.id) })).filter((person) => person.blockReason);
+  return [
+    {
+      id: "overdue",
+      priority: overdue.length ? "crítica" : "ok",
+      title: "Préstamos vencidos",
+      body: overdue.length ? `${overdue.length} préstamo(s) necesitan gestión de devolución.` : "Sin préstamos vencidos.",
+      section: "loans",
+      actionLabel: "Ir a devoluciones",
+      rows: overdue.map((loan) => ({ folio: displayFolio(loan, "PRE"), solicitante: loan.requesterName, fecha: loan.expectedReturn, atraso: overdueDays(loan.expectedReturn), items: loan.items.map((item) => `${item.name} (${item.qty})`).join(", ") })),
+      columns: [["folio", "Folio"], ["solicitante", "Solicitante"], ["fecha", "Fecha esperada"], ["atraso", "Días"], ["items", "Ítems"]]
+    },
+    {
+      id: "zero-stock",
+      priority: zeroStock.length ? "crítica" : "ok",
+      title: "Stock en cero",
+      body: zeroStock.length ? `${zeroStock.length} material(es) no tienen unidades disponibles.` : "Sin materiales en cero.",
+      section: "inventory",
+      actionLabel: "Ver inventario",
+      rows: zeroStock.map((item) => ({ name: item.name, code: item.code, stock: item.stock, minStock: item.minStock, location: item.location })),
+      columns: [["name", "Material"], ["code", "Código"], ["stock", "Stock"], ["minStock", "Mínimo"], ["location", "Ubicación"]]
+    },
+    {
+      id: "low-stock",
+      priority: lowStock.length ? "media" : "ok",
+      title: "Stock bajo",
+      body: lowStock.length ? `${lowStock.length} material(es) están bajo el mínimo.` : "Stock crítico controlado.",
+      section: "inventory",
+      actionLabel: "Revisar stock",
+      rows: lowStock.map((item) => ({ name: item.name, code: item.code, stock: item.stock, minStock: item.minStock, location: item.location })),
+      columns: [["name", "Material"], ["code", "Código"], ["stock", "Stock"], ["minStock", "Mínimo"], ["location", "Ubicación"]]
+    },
+    {
+      id: "due-soon",
+      priority: dueSoon.length ? "media" : "ok",
+      title: "Préstamos por vencer",
+      body: dueSoon.length ? `${dueSoon.length} préstamo(s) vencen dentro de ${dueSoonDays} día(s).` : "Sin vencimientos próximos.",
+      section: "loans",
+      actionLabel: "Ver préstamos",
+      rows: dueSoon.map((loan) => ({ folio: displayFolio(loan, "PRE"), solicitante: loan.requesterName, fecha: loan.expectedReturn, items: loan.items.map((item) => `${item.name} (${item.qty})`).join(", ") })),
+      columns: [["folio", "Folio"], ["solicitante", "Solicitante"], ["fecha", "Fecha esperada"], ["items", "Ítems"]]
+    },
+    {
+      id: "requests",
+      priority: pendingRequests.length || preparingRequests.length ? "media" : "ok",
+      title: "Solicitudes docentes",
+      body: `${pendingRequests.length} pendiente(s), ${preparingRequests.length} en preparación.`,
+      section: "requests",
+      actionLabel: "Abrir solicitudes",
+      rows: [...pendingRequests, ...preparingRequests].map((request) => ({ folio: displayFolio(request, "SOL"), docente: request.requesterName, estado: request.status, fecha: request.expectedDate, items: request.items.map((item) => `${item.name} (${item.qty})`).join(", ") })),
+      columns: [["folio", "Folio"], ["docente", "Docente"], ["estado", "Estado"], ["fecha", "Fecha requerida"], ["items", "Ítems"]]
+    },
+    {
+      id: "messages",
+      priority: unreadMessages.length ? "media" : "ok",
+      title: "Mensajes sin leer",
+      body: unreadMessages.length ? `${unreadMessages.length} mensaje(s) requieren respuesta.` : "No hay mensajes nuevos.",
+      section: "messages",
+      actionLabel: "Abrir chat",
+      rows: unreadMessages.map((msg) => ({ docente: msg.teacherName, fecha: msg.date, hora: msg.time, mensaje: msg.body })),
+      columns: [["docente", "Docente"], ["fecha", "Fecha"], ["hora", "Hora"], ["mensaje", "Mensaje"]]
+    },
+    {
+      id: "blocked",
+      priority: blockedPeople.length ? "crítica" : "ok",
+      title: "Personas bloqueadas",
+      body: blockedPeople.length ? `${blockedPeople.length} persona(s) bloqueadas por pendientes.` : "No hay bloqueos activos.",
+      section: "people",
+      actionLabel: "Ver personas",
+      rows: blockedPeople.map((person) => ({ nombre: person.name, tipo: person.typeLabel, motivo: person.blockReason })),
+      columns: [["nombre", "Nombre"], ["tipo", "Tipo"], ["motivo", "Motivo"]]
+    },
+    {
+      id: "tools",
+      priority: unavailableTools.length ? "informativa" : "ok",
+      title: "Herramientas no disponibles",
+      body: unavailableTools.length ? `${unavailableTools.length} herramienta(s) están prestadas o en reparación.` : "Herramientas disponibles controladas.",
+      section: "inventory",
+      actionLabel: "Ver herramientas",
+      rows: unavailableTools.map((tool) => ({ name: tool.name, code: tool.code, estado: tool.status, description: tool.description })),
+      columns: [["name", "Herramienta"], ["code", "Código"], ["estado", "Estado"], ["description", "Descripción"]]
+    }
+  ];
+}
+
 function AdminAssistant() {
   const { state } = useApp();
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState(() => localAdminLoanAnalysis(state));
   const [loading, setLoading] = useState(false);
   const [source, setSource] = useState("local");
-  const askAssistant = async (mode = "question") => {
-    const localAnswer = mode === "loan-analysis" ? localAdminLoanAnalysis(state) : localAdminQuestionAnswer(state, question);
+  const quickPrompts = [
+    "Resumen de urgencias para hoy",
+    "Qué materiales conviene reponer primero",
+    "Qué personas tienen pendientes o bloqueos",
+    "Qué solicitudes docentes siguen sin respuesta",
+    "Qué herramientas están fuera del pañol"
+  ];
+  const askAssistant = async (mode = "question", promptOverride = question) => {
+    const localAnswer = mode === "loan-analysis" ? localAdminLoanAnalysis(state) : localAdminQuestionAnswer(state, promptOverride);
     setAnswer(localAnswer);
     setSource("local");
     if (!isSupabaseConfigured || !supabase) return;
     setLoading(true);
     try {
       const { data, error } = await supabase.functions.invoke("panol-assistant", {
-        body: { mode, question, context: buildAdminAiContext(state) }
+        body: { mode, question: promptOverride, context: buildAdminAiContext(state) }
       });
       if (error || !data?.answer) throw error || new Error("Sin respuesta IA");
       setAnswer(data.answer);
@@ -1292,6 +1490,9 @@ function AdminAssistant() {
             <Button onClick={() => askAssistant("question")} disabled={loading || !question.trim()}><Search size={16} />Preguntar</Button>
             <Button variant="secondary" onClick={() => askAssistant("loan-analysis")} disabled={loading}><Wand2 size={16} />Analizar préstamos</Button>
           </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {quickPrompts.map((prompt) => <Button key={prompt} variant="secondary" onClick={() => { setQuestion(prompt); askAssistant("question", prompt); }}><Wand2 size={15} />{prompt}</Button>)}
         </div>
       </section>
       <section className="panel grid gap-4">
@@ -1356,7 +1557,40 @@ function Inventory() {
           return <Button key={key} variant={tab === key ? "primary" : "secondary"} onClick={() => setTab(key)}><Icon size={16} />{cfg.title}</Button>;
         })}
       </div>
+      {tab === "materials" && <InventoryBulkPanel />}
       <CrudTable collection={tab} config={config} />
+    </div>
+  );
+}
+
+function InventoryBulkPanel() {
+  const { state, dispatch, notify } = useApp();
+  const categories = [...new Set(state.materials.map((item) => item.category || "Sin categoría"))].sort();
+  const [category, setCategory] = useState(categories[0] || "");
+  const [minStock, setMinStock] = useState("");
+  const [location, setLocation] = useState("");
+  const selectedRows = state.materials.filter((item) => (item.category || "Sin categoría") === category);
+  const applyBulk = () => {
+    if (!selectedRows.length) return notify("No hay materiales para actualizar", "error");
+    selectedRows.forEach((item) => {
+      dispatch({ type: "UPSERT_ENTITY", collection: "materials", prefix: "mat", row: { ...item, minStock: minStock === "" ? item.minStock : Number(minStock), location: location.trim() || item.location } });
+    });
+    notify(`Acción masiva aplicada a ${selectedRows.length} material(es)`);
+    setMinStock("");
+    setLocation("");
+  };
+  return (
+    <div className="rounded-md border border-steel-700 bg-steel-850 p-4">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
+        <div className="flex-1">
+          <h2 className="section-title"><Boxes size={18} />Acciones masivas de inventario</h2>
+          <p className="text-sm text-slate-400">Actualiza mínimos o ubicación para una categoría completa sin editar material por material.</p>
+        </div>
+        <Field label="Categoría"><select className={inputClass} value={category} onChange={(e) => setCategory(e.target.value)}>{categories.map((item) => <option key={item} value={item}>{item}</option>)}</select></Field>
+        <Field label="Nuevo mínimo"><input className={inputClass} type="number" min="0" value={minStock} onChange={(e) => setMinStock(e.target.value)} placeholder="mantener" /></Field>
+        <Field label="Nueva ubicación"><input className={inputClass} value={location} onChange={(e) => setLocation(e.target.value)} placeholder="mantener" /></Field>
+        <Button onClick={applyBulk} disabled={!category}><Save size={16} />Aplicar a {selectedRows.length}</Button>
+      </div>
     </div>
   );
 }
@@ -1367,6 +1601,8 @@ function CrudTable({ collection, config }) {
   const [page, setPage] = useState(1);
   const [editing, setEditing] = useState(null);
   const [deleting, setDeleting] = useState(null);
+  const [profile, setProfile] = useState(null);
+  const hasPersonProfile = collection === "students" || collection === "teachers";
   const rows = state[collection].filter((row) => JSON.stringify(row).toLowerCase().includes(query.toLowerCase()));
   const perPage = 7;
   const pageRows = rows.slice((page - 1) * perPage, page * perPage);
@@ -1384,14 +1620,54 @@ function CrudTable({ collection, config }) {
       </div>
       <DataTable rows={pageRows} columns={config.columns} actions={(row) => (
         <div className="flex justify-end gap-2">
+          {hasPersonProfile && <Button variant="ghost" className="px-2" onClick={() => setProfile(row)} title="Ficha rápida"><UserRound size={16} /></Button>}
           <Button variant="ghost" className="px-2" onClick={() => setEditing(row)} title="Editar"><Edit3 size={16} /></Button>
           <Button variant="ghost" className="px-2 text-red-300" onClick={() => setDeleting(row)} title="Eliminar"><Trash2 size={16} /></Button>
         </div>
       )} />
       <Pager page={page} pages={pages} setPage={setPage} />
+      {profile && <PersonProfileModal person={profile} type={collection === "students" ? "student" : "teacher"} onClose={() => setProfile(null)} />}
       {editing && <EditEntityModal config={config} initial={editing} onClose={() => setEditing(null)} onSave={save} />}
       {deleting && <ConfirmModal title="Confirmar eliminación" body={`Se eliminará "${deleting.name}". Esta acción no se puede deshacer.`} onCancel={() => setDeleting(null)} onConfirm={() => { dispatch({ type: "DELETE_ENTITY", collection, id: deleting.id }); notify("Registro eliminado"); setDeleting(null); }} />}
     </div>
+  );
+}
+
+function PersonProfileModal({ person, type, onClose }) {
+  const { state } = useApp();
+  const typeLabel = type === "student" ? "Alumno" : "Profesor";
+  const loans = state.loans.filter((loan) => loan.requesterId === person.id || normalizeHeader(loan.requesterName) === normalizeHeader(person.name));
+  const activeLoans = loans.filter((loan) => loan.status === "activo");
+  const requests = type === "teacher" ? (state.requests || []).filter((request) => request.requesterId === person.id || normalizeHeader(request.requesterName) === normalizeHeader(person.name)) : [];
+  const messages = type === "teacher" ? (state.messages || []).filter((msg) => msg.teacherId === person.id) : [];
+  const blockReason = getBlockReason(state.loans, type, person.id);
+  return (
+    <Modal title={`Ficha rápida · ${person.name}`} onClose={onClose} wide>
+      <div className="grid gap-5">
+        <div className="grid gap-3 md:grid-cols-4">
+          <div className="rounded-md border border-steel-700 bg-steel-850 p-3"><p className="text-sm text-slate-400">Tipo</p><p className="text-xl font-bold text-white">{typeLabel}</p></div>
+          <div className="rounded-md border border-steel-700 bg-steel-850 p-3"><p className="text-sm text-slate-400">Préstamos activos</p><p className="text-xl font-bold text-white">{activeLoans.length}</p></div>
+          <div className="rounded-md border border-steel-700 bg-steel-850 p-3"><p className="text-sm text-slate-400">Historial préstamos</p><p className="text-xl font-bold text-white">{loans.length}</p></div>
+          <div className="rounded-md border border-steel-700 bg-steel-850 p-3"><p className="text-sm text-slate-400">Estado</p><Badge tone={blockReason ? "red" : "green"}>{blockReason ? "bloqueado" : "habilitado"}</Badge></div>
+        </div>
+        {blockReason && <div className="rounded-md border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200">{blockReason}</div>}
+        <div className="grid gap-4 xl:grid-cols-2">
+          <section className="grid gap-3">
+            <h3 className="section-title"><ClipboardList size={18} />Préstamos</h3>
+            <DataTable rows={loans.map((loan) => ({ folio: displayFolio(loan, "PRE"), estado: loan.status, fecha: loan.createdAt, devolucion: loan.expectedReturn, items: loan.items.map((item) => `${item.name} (${item.qty})`).join(", ") }))} columns={[["folio", "Folio"], ["estado", "Estado"], ["fecha", "Entrega"], ["devolucion", "Devolución"], ["items", "Ítems"]]} compact />
+          </section>
+          <section className="grid gap-3">
+            <h3 className="section-title"><Inbox size={18} />Solicitudes y mensajes</h3>
+            {type === "teacher" ? (
+              <div className="grid gap-3">
+                <DataTable rows={requests.map((request) => ({ folio: displayFolio(request, "SOL"), estado: request.status, fecha: request.createdAt, items: request.items.map((item) => `${item.name} (${item.qty})`).join(", ") }))} columns={[["folio", "Folio"], ["estado", "Estado"], ["fecha", "Fecha"], ["items", "Ítems"]]} compact />
+                <p className="text-sm text-slate-400">Mensajes registrados: <span className="font-semibold text-white">{messages.length}</span></p>
+              </div>
+            ) : <p className="rounded-md border border-steel-700 bg-steel-850 p-4 text-sm text-slate-400">Las solicitudes docentes aplican solo a perfiles de profesor.</p>}
+          </section>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -2031,11 +2307,13 @@ function TeacherRequestsInbox() {
   const { state, dispatch, notify } = useApp();
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("pendiente");
+  const [view, setView] = useState("kanban");
   const [requestReplies, setRequestReplies] = useState({});
   const [deletingRequest, setDeletingRequest] = useState(null);
   const requestStatusOptions = ["pendiente", "en preparación", "preparada", "aprobada", "entregada", "rechazada", "cerrada", "todas"];
   const requests = (state.requests || []).filter((request) => (status === "todas" || request.status === status) && `${request.requesterName} ${request.department || ""} ${request.items.map((item) => `${item.name} ${item.code}`).join(" ")}`.toLowerCase().includes(query.toLowerCase()));
   const allRequests = state.requests || [];
+  const kanbanStatuses = ["pendiente", "en preparación", "preparada", "entregada", "rechazada"];
   const pendingCount = allRequests.filter((r) => r.status === "pendiente").length;
   const preparingCount = allRequests.filter((r) => r.status === "en preparación").length;
   const readyCount = allRequests.filter((r) => r.status === "preparada").length;
@@ -2082,7 +2360,36 @@ function TeacherRequestsInbox() {
         <Field label="Buscar solicitud"><div className="relative"><Search className="pointer-events-none absolute left-3 top-2.5 text-slate-500" size={18} /><input className={`${inputClass} pl-10`} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Docente, departamento, material o código" /></div></Field>
         <Field label="Estado"><select className={inputClass} value={status} onChange={(e) => setStatus(e.target.value)}>{requestStatusOptions.map((option) => <option key={option} value={option}>{option === "todas" ? "Todas" : option}</option>)}</select></Field>
       </div>
-      <div className="grid gap-3">
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button variant={view === "kanban" ? "primary" : "secondary"} onClick={() => setView("kanban")}><Inbox size={16} />Kanban</Button>
+        <Button variant={view === "lista" ? "primary" : "secondary"} onClick={() => setView("lista")}><FileText size={16} />Lista</Button>
+      </div>
+      {view === "kanban" && (
+        <div className="grid gap-3 xl:grid-cols-5">
+          {kanbanStatuses.map((columnStatus) => {
+            const columnRows = allRequests.filter((request) => request.status === columnStatus && `${request.requesterName} ${request.department || ""} ${request.items.map((item) => `${item.name} ${item.code}`).join(" ")}`.toLowerCase().includes(query.toLowerCase()));
+            return (
+              <div key={columnStatus} className="rounded-md border border-steel-700 bg-steel-850 p-3">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <p className="font-bold capitalize text-white">{columnStatus}</p>
+                  <Badge tone={columnStatus === "rechazada" ? "red" : columnStatus === "preparada" ? "blue" : columnStatus === "entregada" ? "green" : "amber"}>{columnRows.length}</Badge>
+                </div>
+                <div className="grid gap-2">
+                  {columnRows.slice(0, 8).map((request) => (
+                    <button key={request.id} type="button" onClick={() => { setStatus(columnStatus); setView("lista"); }} className="rounded-md border border-steel-700 bg-steel-900 p-3 text-left transition hover:border-safety-500">
+                      <p className="text-sm font-bold text-white">{displayFolio(request, "SOL")}</p>
+                      <p className="mt-1 text-sm text-slate-300">{request.requesterName}</p>
+                      <p className="mt-1 text-xs text-slate-400">{request.items.length} ítem(s) · {formatDate(request.expectedDate)}</p>
+                    </button>
+                  ))}
+                  {columnRows.length === 0 && <p className="rounded-md border border-steel-700 bg-steel-900 p-3 text-xs text-slate-400">Sin solicitudes</p>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <div className={`grid gap-3 ${view === "lista" ? "" : "hidden"}`}>
         {requests.length === 0 && <div className="rounded-md border border-steel-700 bg-steel-850 p-6 text-center text-slate-400">Sin solicitudes para mostrar</div>}
         {requests.map((request) => <div key={request.id} className="rounded-md border border-steel-700 bg-steel-850 p-4">
           <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
@@ -2939,6 +3246,18 @@ function SettingsPage() {
         <Field label="Responsable activo"><input className={inputClass} value={state.settings.operatorName || ""} onChange={(e) => dispatch({ type: "SET_SETTING", key: "operatorName", value: e.target.value })} /></Field>
         <Field label="Rol de usuario"><select className={inputClass} value={state.settings.operatorRole || "pañolero"} onChange={(e) => dispatch({ type: "SET_SETTING", key: "operatorRole", value: e.target.value })}><option value="administrador">Administrador</option><option value="pañolero">Pañolero</option><option value="profesor">Profesor consultor</option><option value="lectura">Solo lectura</option></select></Field>
       </div>
+      <div className="mt-6 rounded-md border border-steel-700 bg-steel-850 p-4">
+        <h3 className="section-title"><ShieldCheck size={18} />Reglas operativas</h3>
+        <div className="grid gap-4 md:grid-cols-3">
+          <Field label="Avisar préstamos por vencer en"><input className={inputClass} type="number" min="1" value={state.settings.loanDueSoonDays ?? 2} onChange={(e) => dispatch({ type: "SET_SETTING", key: "loanDueSoonDays", value: Number(e.target.value) })} /></Field>
+          <Field label="Días por defecto para devolución"><input className={inputClass} type="number" min="0" value={state.settings.defaultReturnDays ?? 0} onChange={(e) => dispatch({ type: "SET_SETTING", key: "defaultReturnDays", value: Number(e.target.value) })} /></Field>
+          <Field label="Recordatorio docente al entrar"><select className={inputClass} value={state.settings.teacherReturnReminder ?? "activo"} onChange={(e) => dispatch({ type: "SET_SETTING", key: "teacherReturnReminder", value: e.target.value })}><option value="activo">Activo</option><option value="apagado">Apagado</option></select></Field>
+        </div>
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
+          <label className="inline-flex items-center gap-2 text-sm text-slate-300"><input type="checkbox" checked={Boolean(state.settings.defaultFungibleNonReturnable)} onChange={(e) => dispatch({ type: "SET_SETTING", key: "defaultFungibleNonReturnable", value: e.target.checked })} />Material fungible sale como "no vuelve" por defecto</label>
+          <label className="inline-flex items-center gap-2 text-sm text-slate-300"><input type="checkbox" checked={state.settings.showAdminAlertStrip !== false} onChange={(e) => dispatch({ type: "SET_SETTING", key: "showAdminAlertStrip", value: e.target.checked })} />Mostrar franja de alertas en la portada</label>
+        </div>
+      </div>
       <div className="mt-4">
         <Field label="Tema visual">
           <div className="flex gap-2">
@@ -3599,7 +3918,7 @@ function TeacherWorkspace({ currentUser, onLogout }) {
             <Check className="mr-2 inline" size={16} />Agregado al carrito: {lastAdded}
           </div>
         )}
-        {pendingReturnLoans.length > 0 && returnReminderOpen && (
+        {state.settings.teacherReturnReminder !== "apagado" && pendingReturnLoans.length > 0 && returnReminderOpen && (
           <Modal title="ATENTO: devoluciones pendientes" onClose={() => setReturnReminderOpen(false)} wide>
             <div className="grid gap-4">
               <div className="rounded-md border border-red-500/50 bg-red-500/10 p-4">
