@@ -73,6 +73,7 @@ const permissionOptions = [
   ["alerts", "Centro de alertas"],
   ["people", "Personas"],
   ["inventory", "Inventario"],
+  ["keys", "Control de llaves"],
   ["loans", "Entrega y recepción"],
   ["requests", "Solicitudes docentes"],
   ["messages", "Mensajes"],
@@ -255,6 +256,23 @@ seed.movements = [
   { id: uid("mov"), date: addDays(-10), type: "entrada", detail: "Factura Suministros Técnicos Norte", requesterName: "Proveedor", status: "importado" }
 ];
 
+const defaultKeys = [
+  ["202", "Artes 1"], ["203", "Artes 2"], ["204", "Construcciones", "prestada", "Luis Vera", "2026-03-18"],
+  ["301", "Electricidad 1"], ["302", "Electricidad 2"], ["303", "Electronica 1"], ["304", "Electronica 2"],
+  ["305", "Electronica 3", "prestada", "Luis Vera", "2026-03-18"], ["306", "Electricidad 3"], ["307", "Electricidad 4"],
+  ["308", "Electricidad 5"], ["309", "Pañol 3er piso"], ["401", "Telecom 1"], ["402", "Telecom 2"],
+  ["403", "Telecom 3"], ["404", "Electronica 4"], ["405", "Telecom 4"], ["406", "Electronica 5"],
+  ["407", "Electronica 6"], ["408", "Proyecto 408"], ["410", "Pañol 4to piso"]
+].map(([number, name, status = "disponible", responsible = "", loanDate = "", observation = ""]) => ({
+  id: `key-${number}`,
+  number,
+  name,
+  status,
+  responsible,
+  loanDate,
+  observation
+}));
+
 function createEmptyState() {
   return {
     settings: { criticalThreshold: 5, theme: "dark", operatorName: "Encargado de pañol", operatorRole: "pañolero" },
@@ -263,6 +281,7 @@ function createEmptyState() {
     teachers: [],
     materials: [],
     tools: [],
+    keys: defaultKeys,
     loans: [],
     requests: [],
     portalUsers: [],
@@ -292,6 +311,7 @@ function removeDemoData(state) {
     teachers: (state.teachers || []).filter((item) => !demoTeacherRuts.has(item.rut)),
     materials: (state.materials || []).filter((item) => !demoMaterialCodes.has(item.code)),
     tools: (state.tools || []).filter((item) => !demoToolCodes.has(item.code)),
+    keys: state.keys || defaultKeys,
     loans: (state.loans || []).filter((item) => !demoRequesterNames.has(item.requesterName)),
     requests: state.requests || [],
     portalUsers: state.portalUsers || [],
@@ -315,7 +335,7 @@ function loadInitialState() {
   }
 }
 
-const cloudMergeCollections = ["students", "teachers", "materials", "tools", "loans", "requests", "invoices", "movements", "messages", "portalUsers", "appUsers", "auditLog", "backups"];
+const cloudMergeCollections = ["students", "teachers", "materials", "tools", "keys", "loans", "requests", "invoices", "movements", "messages", "portalUsers", "appUsers", "auditLog", "backups"];
 
 function mergeRowsById(remoteRows = [], localRows = []) {
   const merged = new Map();
@@ -353,6 +373,29 @@ function reducer(state, action) {
     }
     case "DELETE_ENTITY":
       return { ...state, [action.collection]: state[action.collection].filter((x) => x.id !== action.id) };
+    case "UPSERT_KEY": {
+      const row = action.row.id ? action.row : { ...action.row, id: uid("key"), status: action.row.status || "disponible" };
+      const keys = state.keys || [];
+      return { ...state, keys: keys.some((item) => item.id === row.id) ? keys.map((item) => item.id === row.id ? row : item) : [row, ...keys] };
+    }
+    case "CHECKOUT_KEY": {
+      const key = (state.keys || []).find((item) => item.id === action.id);
+      return {
+        ...state,
+        keys: (state.keys || []).map((item) => item.id === action.id ? { ...item, status: "prestada", responsible: action.responsible, loanDate: today(), observation: action.observation || "" } : item),
+        movements: [{ id: uid("mov"), date: today(), type: "salida", detail: `Llave ${key?.number || ""} ${key?.name || ""}`, requesterName: action.responsible, status: "prestada", operatorName: state.settings?.operatorName }, ...(state.movements || [])]
+      };
+    }
+    case "RETURN_KEY": {
+      const key = (state.keys || []).find((item) => item.id === action.id);
+      return {
+        ...state,
+        keys: (state.keys || []).map((item) => item.id === action.id ? { ...item, status: "disponible", responsible: "", loanDate: "", observation: action.observation || "" } : item),
+        movements: [{ id: uid("mov"), date: today(), type: "entrada", detail: `Devolucion llave ${key?.number || ""} ${key?.name || ""}`, requesterName: key?.responsible || "Responsable", status: "disponible", operatorName: state.settings?.operatorName }, ...(state.movements || [])]
+      };
+    }
+    case "DELETE_KEY":
+      return { ...state, keys: (state.keys || []).filter((item) => item.id !== action.id) };
     case "UPSERT_APP_USER": {
       const row = action.row.id ? action.row : { ...action.row, id: uid("appusr"), createdAt: today(), active: true };
       const users = getAppUsers(state);
@@ -500,6 +543,10 @@ function auditEntryForAction(action, state) {
     SET_SETTING: `Ajuste modificado: ${action.key}`,
     UPSERT_ENTITY: `Registro guardado en ${action.collection}`,
     DELETE_ENTITY: `Registro eliminado de ${action.collection}`,
+    UPSERT_KEY: `Llave guardada: ${action.row?.number || ""}`,
+    CHECKOUT_KEY: `Llave prestada a ${action.responsible || ""}`,
+    RETURN_KEY: "Llave devuelta al pañol",
+    DELETE_KEY: "Llave eliminada",
     UPSERT_APP_USER: `Perfil de acceso guardado: ${action.row?.username || action.row?.name || ""}`,
     DELETE_APP_USER: "Perfil de acceso eliminado",
     UPSERT_PORTAL_USER: `Acceso docente guardado: ${action.row?.teacherName || ""}`,
@@ -768,6 +815,12 @@ function GlobalSearch({ allowedSections = [], onSelect }) {
         if (matches(text)) rows.push({ id: `tool-${item.id}`, section: "inventory", type: "Herramienta", title: item.name, meta: `${item.code || "sin codigo"} · ${item.status || "sin estado"}` });
       });
     }
+    if (canSee("keys")) {
+      (state.keys || []).forEach((key) => {
+        const text = `${key.number} ${key.name} ${key.status} ${key.responsible} ${key.observation}`;
+        if (matches(text)) rows.push({ id: `key-${key.id}`, section: "keys", type: "Llave", title: `${key.number} · ${key.name}`, meta: key.status === "prestada" ? `Prestada a ${key.responsible || "sin responsable"}` : "Disponible en pañol" });
+      });
+    }
     if (canSee("loans")) {
       (state.loans || []).forEach((loan) => {
         const folio = displayFolio(loan, "PRE");
@@ -893,11 +946,13 @@ function Layout({ section, setSection, currentUser, onLogout }) {
   const { state, dispatch } = useApp();
   const isLight = state.settings.theme === "light";
   const [focusedTeacherId, setFocusedTeacherId] = useState("");
+  const [keyPanelOpen, setKeyPanelOpen] = useState(false);
   const nav = [
     ["dashboard", "Dashboard", LayoutDashboard],
     ["alerts", "Centro de alertas", Bell],
     ["people", "Personas", UsersRound],
     ["inventory", "Inventario", Boxes],
+    ["keys", "Control de llaves", KeyRound],
     ["loans", "Entrega y recepción", ClipboardList],
     ["requests", "Solicitudes docentes", Inbox],
     ["messages", "Mensajes", MessageSquare],
@@ -913,6 +968,7 @@ function Layout({ section, setSection, currentUser, onLogout }) {
     alerts: "Centro de alertas",
     people: "Alumnos y profesores",
     inventory: "Materiales y herramientas",
+    keys: "Control de llaves",
     loans: "Entrega y recepción",
     requests: "Solicitudes docentes",
     messages: "Mensajes",
@@ -968,7 +1024,7 @@ function Layout({ section, setSection, currentUser, onLogout }) {
         </div>
         <nav className="space-y-1 p-4">
           {allowedNav.map(([id, label, Icon]) => (
-            <button key={id} onClick={() => setSection(id)} className={`flex w-full items-center gap-3 rounded-md px-4 py-3 text-left text-sm font-semibold transition ${section === id ? "bg-safety-500 text-steel-950" : "text-slate-300 hover:bg-steel-800"}`}>
+            <button key={id} onClick={() => id === "keys" ? setKeyPanelOpen(true) : setSection(id)} className={`flex w-full items-center gap-3 rounded-md px-4 py-3 text-left text-sm font-semibold transition ${section === id || (id === "keys" && keyPanelOpen) ? "bg-safety-500 text-steel-950" : "text-slate-300 hover:bg-steel-800"}`}>
               <Icon size={19} />{label}
             </button>
           ))}
@@ -990,6 +1046,10 @@ function Layout({ section, setSection, currentUser, onLogout }) {
               allowedSections={currentUser?.permissions || []}
               onSelect={(result) => {
                 if (result.focusedTeacherId) setFocusedTeacherId(result.focusedTeacherId);
+                if (result.section === "keys") {
+                  setKeyPanelOpen(true);
+                  return;
+                }
                 setSection(result.section);
               }}
             />
@@ -1004,7 +1064,7 @@ function Layout({ section, setSection, currentUser, onLogout }) {
             </div>
             <div className="mobile-nav -mx-1 flex gap-2 overflow-x-auto px-1 pb-1 lg:hidden">
               {allowedNav.map(([id, label, Icon]) => (
-                <Button key={id} variant={section === id ? "primary" : "secondary"} onClick={() => setSection(id)} className="shrink-0 whitespace-nowrap">
+                <Button key={id} variant={section === id || (id === "keys" && keyPanelOpen) ? "primary" : "secondary"} onClick={() => id === "keys" ? setKeyPanelOpen(true) : setSection(id)} className="shrink-0 whitespace-nowrap">
                   <Icon size={16} />{label}
                 </Button>
               ))}
@@ -1045,8 +1105,160 @@ function Layout({ section, setSection, currentUser, onLogout }) {
             {unreadMessagesCount > 0 && <span className="absolute -right-1 -top-1 grid h-6 min-w-6 place-items-center rounded-full bg-red-600 px-1 text-xs font-bold text-white">{unreadMessagesCount}</span>}
           </button>
         )}
+        {keyPanelOpen && <KeyControlModal onClose={() => setKeyPanelOpen(false)} />}
       </div>
     </div>
+  );
+}
+
+function KeyControlModal({ onClose }) {
+  const { state, dispatch, notify } = useApp();
+  const [query, setQuery] = useState("");
+  const [selectedId, setSelectedId] = useState("");
+  const [responsible, setResponsible] = useState("");
+  const [observation, setObservation] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [newKey, setNewKey] = useState({ number: "", name: "", observation: "" });
+  const keys = [...(state.keys || defaultKeys)].sort((a, b) => Number(a.number) - Number(b.number));
+  const selected = keys.find((key) => key.id === selectedId);
+  const filtered = keys.filter((key) => {
+    const term = normalizeHeader(query);
+    if (!term) return true;
+    return normalizeHeader(`${key.number} ${key.name} ${key.status} ${key.responsible} ${key.observation}`).includes(term);
+  });
+  const borrowed = keys.filter((key) => key.status === "prestada");
+  const available = keys.length - borrowed.length;
+  const peopleOptions = [...(state.teachers || []), ...(state.students || [])].map((person) => person.name).filter(Boolean);
+
+  const selectKey = (key) => {
+    setSelectedId(key.id);
+    setResponsible(key.responsible || "");
+    setObservation(key.observation || "");
+  };
+  const checkout = () => {
+    if (!selected || !responsible.trim()) {
+      notify("Indica quien retira la llave", "error");
+      return;
+    }
+    dispatch({ type: "CHECKOUT_KEY", id: selected.id, responsible: responsible.trim(), observation });
+    notify(`Llave ${selected.number} prestada a ${responsible.trim()}`);
+    selectKey({ ...selected, status: "prestada", responsible: responsible.trim(), observation });
+  };
+  const returnKey = () => {
+    if (!selected) return;
+    dispatch({ type: "RETURN_KEY", id: selected.id, observation });
+    notify(`Llave ${selected.number} devuelta al pañol`);
+    setResponsible("");
+    setObservation("");
+  };
+  const saveNewKey = () => {
+    if (!newKey.number.trim() || !newKey.name.trim()) {
+      notify("Ingresa numero y nombre de la sala", "error");
+      return;
+    }
+    const exists = keys.some((key) => normalizeHeader(key.number) === normalizeHeader(newKey.number));
+    if (exists) {
+      notify("Ya existe una llave con ese numero", "error");
+      return;
+    }
+    dispatch({ type: "UPSERT_KEY", row: { ...newKey, number: newKey.number.trim(), name: newKey.name.trim(), status: "disponible" } });
+    notify("Llave agregada al tablero");
+    setNewKey({ number: "", name: "", observation: "" });
+    setAdding(false);
+  };
+
+  return (
+    <Modal title="Control de llaves" onClose={onClose} wide>
+      <div className="grid gap-4">
+        <div className="grid gap-3 md:grid-cols-[1fr_auto_auto] md:items-center">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
+            <input className={`${inputClass} pl-10`} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar sala, numero o responsable" />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Badge tone="green">{available} en pañol</Badge>
+            <Badge tone="red">{borrowed.length} prestada(s)</Badge>
+          </div>
+          <Button variant="secondary" onClick={() => setAdding(!adding)}><Plus size={16} />Agregar sala</Button>
+        </div>
+
+        {adding && (
+          <div className="grid gap-3 rounded-lg border border-steel-700 bg-steel-850 p-3 md:grid-cols-[140px_1fr_1fr_auto] md:items-end">
+            <Field label="Numero"><input className={inputClass} value={newKey.number} onChange={(event) => setNewKey({ ...newKey, number: event.target.value })} placeholder="Ej: 411" /></Field>
+            <Field label="Nombre sala"><input className={inputClass} value={newKey.name} onChange={(event) => setNewKey({ ...newKey, name: event.target.value })} placeholder="Ej: Laboratorio" /></Field>
+            <Field label="Observacion"><input className={inputClass} value={newKey.observation} onChange={(event) => setNewKey({ ...newKey, observation: event.target.value })} placeholder="Opcional" /></Field>
+            <Button onClick={saveNewKey}><Save size={16} />Guardar</Button>
+          </div>
+        )}
+
+        <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
+          <div className="grid max-h-[58vh] grid-cols-2 gap-3 overflow-auto pr-1 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5">
+            {filtered.map((key) => {
+              const isBorrowed = key.status === "prestada";
+              const title = isBorrowed
+                ? `Prestada a ${key.responsible || "sin responsable"}${key.loanDate ? ` desde ${formatDate(key.loanDate)}` : ""}${key.observation ? ` - ${key.observation}` : ""}`
+                : "Disponible en pañol";
+              return (
+                <button
+                  key={key.id}
+                  type="button"
+                  title={title}
+                  onClick={() => selectKey(key)}
+                  className={`min-h-28 rounded-lg border p-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg ${selectedId === key.id ? "ring-2 ring-safety-500" : ""} ${isBorrowed ? "border-red-500 bg-red-50 text-red-950 dark:bg-red-500/15 dark:text-red-100" : "border-emerald-500 bg-emerald-50 text-emerald-950 dark:bg-emerald-500/15 dark:text-emerald-100"}`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-2xl font-black">{key.number}</p>
+                    <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase ${isBorrowed ? "bg-red-600 text-white" : "bg-emerald-600 text-white"}`}>{isBorrowed ? "Prestada" : "En pañol"}</span>
+                  </div>
+                  <p className="mt-2 font-bold leading-tight">{key.name}</p>
+                  {isBorrowed && <p className="mt-1 truncate text-xs font-semibold">{key.responsible}</p>}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="rounded-lg border border-steel-700 bg-steel-850 p-4">
+            {!selected ? (
+              <div className="grid min-h-64 place-items-center text-center text-sm text-slate-400">
+                <div>
+                  <KeyRound className="mx-auto mb-2" size={28} />
+                  Selecciona una sala del tablero para registrar prestamo o devolucion.
+                </div>
+              </div>
+            ) : (
+              <div className="grid gap-4">
+                <div>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-3xl font-black text-white">{selected.number}</p>
+                      <p className="font-bold text-slate-200">{selected.name}</p>
+                    </div>
+                    <Badge tone={selected.status === "prestada" ? "red" : "green"}>{selected.status === "prestada" ? "Prestada" : "En pañol"}</Badge>
+                  </div>
+                  {selected.status === "prestada" && (
+                    <div className="mt-3 rounded-md border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-100">
+                      <p className="font-bold">La tiene: {selected.responsible || "Sin responsable"}</p>
+                      <p>{selected.loanDate ? `Prestada desde ${formatDate(selected.loanDate)}` : "Sin fecha registrada"}</p>
+                    </div>
+                  )}
+                </div>
+                <Field label="Responsable"><input className={inputClass} value={responsible} onChange={(event) => setResponsible(event.target.value)} list="key-responsibles" placeholder="Nombre de profesor o trabajador" /></Field>
+                <datalist id="key-responsibles">{peopleOptions.map((name) => <option key={name} value={name} />)}</datalist>
+                <Field label="Observacion"><textarea className={`${inputClass} min-h-24`} value={observation} onChange={(event) => setObservation(event.target.value)} placeholder="Motivo, reemplazo, comentario" /></Field>
+                <div className="flex flex-wrap justify-end gap-2">
+                  {selected.status === "prestada" ? (
+                    <Button onClick={returnKey}><Check size={16} />Registrar devolucion</Button>
+                  ) : (
+                    <Button onClick={checkout}><KeyRound size={16} />Prestar llave</Button>
+                  )}
+                  <Button variant="danger" onClick={() => { dispatch({ type: "DELETE_KEY", id: selected.id }); notify("Llave eliminada"); setSelectedId(""); }}><Trash2 size={16} />Eliminar</Button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
