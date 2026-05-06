@@ -119,10 +119,18 @@ const isOverdue = (loan) => loan.status === "activo" && loan.expectedReturn < to
 const personKey = (type, id) => `${type}:${id}`;
 const isFungibleMaterial = (item) => item?.type === "material" && normalizeHeader(item.category || "").includes("fungible");
 const getBlockReason = (loans, requesterType, requesterId) => {
+  if (requesterType === "teacher") return "";
   const pending = loans.find((loan) => loan.status === "activo" && personKey(loan.requesterType, loan.requesterId) === personKey(requesterType, requesterId) && (loan.partialReturn || isOverdue(loan)));
   if (!pending) return "";
   if (pending.partialReturn) return `Bloqueado por devolución parcial pendiente del ${formatDate(pending.returnedAt || pending.createdAt)}.`;
   return `Bloqueado por préstamo vencido desde ${formatDate(pending.expectedReturn)} (${overdueDays(pending.expectedReturn)} días de atraso).`;
+};
+
+const getPendingLoanNotice = (loans, requesterType, requesterId) => {
+  const pending = loans.find((loan) => loan.status === "activo" && personKey(loan.requesterType, loan.requesterId) === personKey(requesterType, requesterId) && (loan.partialReturn || isOverdue(loan)));
+  if (!pending) return "";
+  if (pending.partialReturn) return `Tiene una devolucion parcial pendiente desde el ${formatDate(pending.returnedAt || pending.createdAt)}.`;
+  return `Tiene un prestamo vencido desde ${formatDate(pending.expectedReturn)} (${overdueDays(pending.expectedReturn)} dias de atraso).`;
 };
 
 const seed = {
@@ -1890,6 +1898,7 @@ function PersonProfileModal({ person, type, onClose }) {
   const activeLoans = loans.filter((loan) => loan.status === "activo");
   const requests = type === "teacher" ? (state.requests || []).filter((request) => request.requesterId === person.id || normalizeHeader(request.requesterName) === normalizeHeader(person.name)) : [];
   const messages = type === "teacher" ? (state.messages || []).filter((msg) => msg.teacherId === person.id) : [];
+  const pendingNotice = getPendingLoanNotice(state.loans, type, person.id);
   const blockReason = getBlockReason(state.loans, type, person.id);
   return (
     <Modal title={`Ficha rápida · ${person.name}`} onClose={onClose} wide>
@@ -1898,9 +1907,10 @@ function PersonProfileModal({ person, type, onClose }) {
           <div className="rounded-md border border-steel-700 bg-steel-850 p-3"><p className="text-sm text-slate-400">Tipo</p><p className="text-xl font-bold text-white">{typeLabel}</p></div>
           <div className="rounded-md border border-steel-700 bg-steel-850 p-3"><p className="text-sm text-slate-400">Préstamos activos</p><p className="text-xl font-bold text-white">{activeLoans.length}</p></div>
           <div className="rounded-md border border-steel-700 bg-steel-850 p-3"><p className="text-sm text-slate-400">Historial préstamos</p><p className="text-xl font-bold text-white">{loans.length}</p></div>
-          <div className="rounded-md border border-steel-700 bg-steel-850 p-3"><p className="text-sm text-slate-400">Estado</p><Badge tone={blockReason ? "red" : "green"}>{blockReason ? "bloqueado" : "habilitado"}</Badge></div>
+          <div className="rounded-md border border-steel-700 bg-steel-850 p-3"><p className="text-sm text-slate-400">Estado</p><Badge tone={blockReason ? "red" : pendingNotice ? "amber" : "green"}>{blockReason ? "bloqueado" : pendingNotice ? "con pendientes" : "habilitado"}</Badge></div>
         </div>
         {blockReason && <div className="rounded-md border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200">{blockReason}</div>}
+        {!blockReason && pendingNotice && <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">{pendingNotice} El servicio sigue habilitado para profesores.</div>}
         <div className="grid gap-4 xl:grid-cols-2">
           <section className="grid gap-3">
             <h3 className="section-title"><ClipboardList size={18} />Préstamos</h3>
@@ -2004,6 +2014,7 @@ function LoanForm() {
     .filter((item) => `${item.name} ${item.code} ${item.category || ""} ${item.description || ""}`.toLowerCase().includes(itemQuery.toLowerCase()))
     .slice(0, 8);
   const chosenRequester = selectedRequester || (requesterQuery ? filteredPeople[0] : null);
+  const pendingNotice = chosenRequester ? getPendingLoanNotice(state.loans, requesterType, chosenRequester.id) : "";
   const blockReason = chosenRequester ? getBlockReason(state.loans, requesterType, chosenRequester.id) : "";
   const addItem = () => {
     const item = selectedItem || filteredItems[0];
@@ -2020,6 +2031,8 @@ function LoanForm() {
     if (!person || items.length === 0) return notify("Selecciona solicitante e ítems", "error");
     const reason = getBlockReason(state.loans, requesterType, person.id);
     if (reason) return notify(reason, "error");
+    const teacherNotice = requesterType === "teacher" ? getPendingLoanNotice(state.loans, requesterType, person.id) : "";
+    if (teacherNotice) notify(`Profesor con pendientes: ${teacherNotice}`);
     const responsibleTeacher = requesterType === "student" ? (selectedResponsibleTeacher || (teacherQuery ? filteredTeachers[0] : null)) : null;
     return { requesterType, requesterId: person.id, requesterName: person.name, requesterEmail: person.email || "", responsibleTeacherId: responsibleTeacher?.id || "", responsibleTeacherName: responsibleTeacher?.name || "", responsibleTeacherEmail: responsibleTeacher?.email || "", expectedReturn, notes, items: items.map((item) => ({ ...item })), operatorName: state.settings.operatorName };
   };
@@ -2114,6 +2127,7 @@ function LoanForm() {
         </div>
       )}
       {blockReason && <div className="rounded-md border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-200"><AlertTriangle className="mr-2 inline" size={16} />{blockReason}</div>}
+      {!blockReason && requesterType === "teacher" && pendingNotice && <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm font-semibold text-amber-200"><AlertTriangle className="mr-2 inline" size={16} />Profesor con pendientes: {pendingNotice} Puedes registrar el prestamo si corresponde.</div>}
       <div className="grid gap-3 rounded-lg border border-steel-700 bg-steel-850 p-4 md:grid-cols-[1fr_120px_auto]">
         <div className="relative">
           <Field label="Buscar y agregar ítem">
