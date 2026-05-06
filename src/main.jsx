@@ -2267,20 +2267,52 @@ function ReturnForm() {
       </div>
       <div className="grid gap-2">
         {filtered.length === 0 && <div className="rounded-md border border-steel-700 bg-steel-850 p-4 text-center text-sm text-slate-400">No hay solicitudes activas para esa búsqueda</div>}
-        {filtered.map((item) => (
-          <button key={item.id} type="button" onClick={() => setLoanId(item.id)} className={`rounded-md border p-3 text-left transition ${loanId === item.id ? "border-safety-500 bg-safety-500/10" : "border-steel-700 bg-steel-850 hover:bg-steel-800"}`}>
-            <div className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
-              <div>
-                <p className="font-bold text-white"><span className="text-safety-500">{displayFolio(item, "PRE")}</span> · {item.requesterName}</p>
-                <p className="text-sm text-slate-400">{item.items.map((loanItem) => `${loanItem.name} (${loanItem.qty}${loanItem.nonReturnable ? ", no retorna" : ""})`).join(", ")}</p>
-              </div>
-              <Badge tone={isOverdue(item) ? "red" : "amber"}>{isOverdue(item) ? `${overdueDays(item.expectedReturn)} días atraso` : `vence ${formatDate(item.expectedReturn)}`}</Badge>
+        {filtered.map((item) => {
+          const expanded = loanId === item.id;
+          const itemReturnables = item.items.filter((loanItem) => !loanItem.nonReturnable);
+          return (
+            <div key={item.id} className={`overflow-hidden rounded-md border transition ${expanded ? "border-safety-500 bg-safety-500/10 shadow-md" : "border-steel-700 bg-steel-850 hover:bg-steel-800"}`}>
+              <button type="button" onClick={() => setLoanId(item.id)} className="w-full p-3 text-left">
+                <div className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <p className="font-bold text-white"><span className="text-safety-500">{displayFolio(item, "PRE")}</span> · {item.requesterName}</p>
+                    <p className="text-sm text-slate-400">{item.items.map((loanItem) => `${loanItem.name} (${loanItem.qty}${loanItem.nonReturnable ? ", no retorna" : ""})`).join(", ")}</p>
+                  </div>
+                  <Badge tone={isOverdue(item) ? "red" : "amber"}>{isOverdue(item) ? `${overdueDays(item.expectedReturn)} días atraso` : `vence ${formatDate(item.expectedReturn)}`}</Badge>
+                </div>
+              </button>
+              {expanded && (
+                <div className="border-t border-safety-500/40 bg-white/60 p-3 dark:bg-steel-950/35">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <p className="text-sm font-bold text-slate-700 dark:text-slate-200">Ítems a devolver de esta solicitud</p>
+                    <Badge tone={partial ? "amber" : "green"}>{partial ? "Devolución parcial" : "Devolución total"}</Badge>
+                  </div>
+                  <div className="grid gap-3">
+                    {itemReturnables.length === 0 && <div className="rounded-md border border-steel-700 bg-steel-850 p-3 text-sm text-slate-400">Esta solicitud no tiene ítems retornables.</div>}
+                    {itemReturnables.map((loanItem) => (
+                      <div key={`${item.id}-${loanItem.type}-${loanItem.id}`} className="grid gap-3 rounded-md border border-steel-700 bg-steel-900/90 p-3 md:grid-cols-[1fr_180px]">
+                        <div>
+                          <p className="font-semibold text-white">{loanItem.name}</p>
+                          <p className="text-sm text-slate-400">{loanItem.code} · cantidad {loanItem.qty}</p>
+                        </div>
+                        <select className={inputClass} value={conditions[loanItem.id] || "disponible"} onChange={(e) => setConditions({ ...conditions, [loanItem.id]: e.target.value })}>
+                          <option value="disponible">Buen estado</option>
+                          <option value="reparación">Requiere reparación</option>
+                          <option value="dañado">Dañado</option>
+                          <option value="perdido">Perdido</option>
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-4 flex justify-end">
+                    <Button disabled={!itemReturnables.length} onClick={submit}><RotateCcw size={16} />Registrar devolución de esta solicitud</Button>
+                  </div>
+                </div>
+              )}
             </div>
-          </button>
-        ))}
+          );
+        })}
       </div>
-      {loan && <div className="grid gap-3">{returnableItems.map((item) => <div key={item.id} className="grid gap-3 rounded-md border border-steel-700 bg-steel-850 p-3 md:grid-cols-[1fr_180px]"><div><p className="font-semibold">{item.name}</p><p className="text-sm text-slate-400">{item.code} · cantidad {item.qty}</p></div><select className={inputClass} value={conditions[item.id] || "disponible"} onChange={(e) => setConditions({ ...conditions, [item.id]: e.target.value })}><option value="disponible">Buen estado</option><option value="reparación">Requiere reparación</option><option value="dañado">Dañado</option><option value="perdido">Perdido</option></select></div>)}</div>}
-      <div className="flex justify-end"><Button disabled={!loan} onClick={submit}><RotateCcw size={16} />Registrar devolución</Button></div>
     </div>
   );
 }
