@@ -2290,10 +2290,10 @@ function ReturnForm() {
                   <div className="grid gap-3">
                     {itemReturnables.length === 0 && <div className="rounded-md border border-steel-700 bg-steel-850 p-3 text-sm text-slate-400">Esta solicitud no tiene ítems retornables.</div>}
                     {itemReturnables.map((loanItem) => (
-                      <div key={`${item.id}-${loanItem.type}-${loanItem.id}`} className="grid gap-3 rounded-md border border-steel-700 bg-steel-900/90 p-3 md:grid-cols-[1fr_180px]">
+                      <div key={`${item.id}-${loanItem.type}-${loanItem.id}`} className="grid gap-3 rounded-md border border-slate-300 bg-white p-3 md:grid-cols-[1fr_180px] dark:border-steel-700 dark:bg-steel-850">
                         <div>
-                          <p className="font-semibold text-white">{loanItem.name}</p>
-                          <p className="text-sm text-slate-400">{loanItem.code} · cantidad {loanItem.qty}</p>
+                          <p className="font-semibold text-slate-950 dark:text-white">{loanItem.name}</p>
+                          <p className="text-sm text-slate-600 dark:text-slate-300">{loanItem.code} · cantidad {loanItem.qty}</p>
                         </div>
                         <select className={inputClass} value={conditions[loanItem.id] || "disponible"} onChange={(e) => setConditions({ ...conditions, [loanItem.id]: e.target.value })}>
                           <option value="disponible">Buen estado</option>
