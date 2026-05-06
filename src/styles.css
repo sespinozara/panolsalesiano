@@ -57,11 +57,30 @@ button {
 }
 
 .dashboard-kpi {
-  padding: 16px 18px;
+  padding: 12px 16px;
 }
 
 .dashboard-alerts {
-  padding: 16px 20px;
+  padding: 12px 16px;
+}
+
+.dashboard-control .section-title {
+  margin-bottom: 10px;
+}
+
+.dashboard-chart-panel {
+  padding: 14px 16px;
+}
+
+.dashboard-table-panel,
+.dashboard-movements-panel {
+  min-height: 0;
+}
+
+.dashboard-movements-list {
+  max-height: 258px;
+  overflow: auto;
+  padding-right: 2px;
 }
 
 .line-clamp-2 {

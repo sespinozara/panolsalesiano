@@ -1380,16 +1380,16 @@ function Dashboard() {
     }
   };
   return (
-    <div className="grid gap-4">
-      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+    <div className="dashboard-control grid gap-3">
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {kpis.map(([id, label, value, Icon, tone]) => (
           <button key={label} type="button" onClick={() => setDetail(id)} className="panel dashboard-kpi text-left transition hover:border-safety-500 hover:ring-2 hover:ring-safety-500">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-slate-400">{label}</p>
-                <p className="mt-1 text-3xl font-bold text-white">{value}</p>
+                <p className="mt-1 text-2xl font-black text-white sm:text-3xl">{value}</p>
               </div>
-              <div className={`grid h-10 w-10 place-items-center rounded-md ${tone === "red" ? "bg-red-500/15 text-red-300" : tone === "amber" ? "bg-amber-500/15 text-amber-300" : "bg-sky-500/15 text-sky-300"}`}><Icon size={20} /></div>
+              <div className={`grid h-9 w-9 place-items-center rounded-md ${tone === "red" ? "bg-red-500/15 text-red-300" : tone === "amber" ? "bg-amber-500/15 text-amber-300" : "bg-sky-500/15 text-sky-300"}`}><Icon size={18} /></div>
             </div>
           </button>
         ))}
@@ -1408,29 +1408,29 @@ function Dashboard() {
           <AlertTile label="Herramientas no disponibles" value={unavailableTools.length} tone="amber" />
         </div>
       </section>
-      <section className="grid gap-4 xl:grid-cols-2">
+      <section className="grid gap-3 xl:grid-cols-2">
         <ChartPanel title="Top 5 materiales solicitados">
-          <ResponsiveContainer width="100%" height={210}>
+          <ResponsiveContainer width="100%" height={170}>
             <BarChart data={requested}><CartesianGrid strokeDasharray="3 3" stroke="#35434d" /><XAxis dataKey="name" stroke="#94a3b8" tick={{ fontSize: 11 }} /><YAxis stroke="#94a3b8" /><Tooltip contentStyle={{ background: "#171d21", border: "1px solid #35434d" }} /><Bar dataKey="qty" fill="#f59e0b" radius={[4, 4, 0, 0]} /></BarChart>
           </ResponsiveContainer>
         </ChartPanel>
         <ChartPanel title="Préstamos por semana">
-          <ResponsiveContainer width="100%" height={210}>
+          <ResponsiveContainer width="100%" height={170}>
             <LineChart data={lineData}><CartesianGrid strokeDasharray="3 3" stroke="#35434d" /><XAxis dataKey="label" stroke="#94a3b8" /><YAxis stroke="#94a3b8" /><Tooltip contentStyle={{ background: "#171d21", border: "1px solid #35434d" }} /><Line type="monotone" dataKey="prestamos" stroke="#38bdf8" strokeWidth={3} dot={{ fill: "#38bdf8" }} /></LineChart>
           </ResponsiveContainer>
         </ChartPanel>
       </section>
-      <section className="grid gap-4 xl:grid-cols-[1fr_380px]">
-        <div className="panel">
+      <section className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="panel dashboard-table-panel">
           <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <h2 className="section-title mb-0"><AlertTriangle size={18} />Alertas de stock crítico</h2>
             <Button variant="secondary" className="px-3 py-2" onClick={() => setDetail("lowStock")}>Ver todo</Button>
           </div>
-          <DataTable rows={lowStock.slice(0, 5)} columns={[["name", "Material"], ["code", "Código"], ["stock", "Stock"], ["minStock", "Mínimo"], ["location", "Ubicación"]]} compact />
+          <DataTable rows={lowStock.slice(0, 4)} columns={[["name", "Material"], ["code", "Código"], ["stock", "Stock"], ["minStock", "Mínimo"], ["location", "Ubicación"]]} compact />
         </div>
-        <div className="panel">
+        <div className="panel dashboard-movements-panel">
           <h2 className="section-title"><History size={18} />Últimos movimientos</h2>
-          <div className="space-y-2">
+          <div className="dashboard-movements-list space-y-2">
             {state.movements.slice(0, 5).map((m) => <div key={m.id} className="rounded-md border border-steel-700 bg-steel-850 px-3 py-2"><div className="flex justify-between gap-2"><p className="line-clamp-2 text-sm font-semibold">{m.detail}</p><Badge tone={m.type === "entrada" ? "green" : "amber"}>{m.type}</Badge></div><p className="mt-1 truncate text-xs text-slate-400">{formatDate(m.date)} · {m.requesterName}</p></div>)}
           </div>
         </div>
@@ -1444,12 +1444,12 @@ function Dashboard() {
 }
 
 function ChartPanel({ title, children }) {
-  return <div className="panel"><h2 className="section-title"><BarChart3 size={18} />{title}</h2>{children}</div>;
+  return <div className="panel dashboard-chart-panel"><h2 className="section-title"><BarChart3 size={18} />{title}</h2>{children}</div>;
 }
 
 function AlertTile({ label, value, tone }) {
   return (
-    <div className={`flex items-center justify-between gap-3 rounded-md border px-4 py-3 ${tone === "red" ? "border-red-500/35 bg-red-500/10 text-red-200" : "border-amber-500/35 bg-amber-500/10 text-amber-200"}`}>
+    <div className={`flex items-center justify-between gap-3 rounded-md border px-3 py-2 ${tone === "red" ? "border-red-500/35 bg-red-500/10 text-red-200" : "border-amber-500/35 bg-amber-500/10 text-amber-200"}`}>
       <p className="text-sm font-semibold">{label}</p>
       <p className="text-2xl font-bold">{value}</p>
     </div>
