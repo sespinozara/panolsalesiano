@@ -72,13 +72,17 @@ button {
   padding: 14px 16px;
 }
 
+.dashboard-chart-row {
+  order: 8;
+}
+
 .dashboard-table-panel,
 .dashboard-movements-panel {
   min-height: 0;
 }
 
 .dashboard-movements-list {
-  max-height: 258px;
+  max-height: 390px;
   overflow: auto;
   padding-right: 2px;
 }
