@@ -3285,18 +3285,20 @@ function Invoices() {
 }
 
 async function readPdfText(file) {
-  const data = await file.arrayBuffer();
+  const bytes = new Uint8Array(await file.arrayBuffer());
   try {
-    const pdf = await pdfjsLib.getDocument({ data }).promise;
+    // pdf.js can detach the ArrayBuffer it receives. Keep independent byte copies
+    // so the raw-text fallback can still run when parsing fails or returns empty.
+    const pdf = await pdfjsLib.getDocument({ data: bytes.slice() }).promise;
     const pages = await Promise.all(Array.from({ length: pdf.numPages }, async (_, index) => {
       const page = await pdf.getPage(index + 1);
       const content = await page.getTextContent();
       return groupPdfTextRows(content.items);
     }));
     const text = pages.join("\n");
-    return text.trim() ? text : readRawPdfText(data);
+    return text.trim() ? text : readRawPdfText(bytes);
   } catch (error) {
-    const fallback = readRawPdfText(data);
+    const fallback = readRawPdfText(bytes);
     if (fallback.trim()) return fallback;
     throw error;
   }
@@ -3328,7 +3330,7 @@ function groupPdfTextRows(items) {
 }
 
 function readRawPdfText(arrayBuffer) {
-  const bytes = new Uint8Array(arrayBuffer);
+  const bytes = arrayBuffer instanceof Uint8Array ? arrayBuffer : new Uint8Array(arrayBuffer);
   let binary = "";
   bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
   const matches = [
