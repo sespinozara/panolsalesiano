@@ -528,7 +528,9 @@ function reducer(state, action) {
         if (ix >= 0) {
           materials[ix] = { ...materials[ix], stock: Number(materials[ix].stock) + Number(item.qty) };
         } else {
-          materials.unshift({ id: uid("mat"), name: item.name, code: item.code || `MAT-${String(materials.length + 1).padStart(3, "0")}`, category: "Sin clasificar", stock: Number(item.qty), minStock: 5, unit: "un", location: "Por asignar" });
+          const category = item.category || "Sin clasificar";
+          const code = item.code || generateEntityCode({ ...state, materials }, "materials", { category });
+          materials.unshift({ id: uid("mat"), name: item.name, code, category, stock: Number(item.qty), minStock: 5, unit: "un", location: "Por asignar" });
         }
       });
       const invoice = { id: uid("fac"), date: today(), provider: action.provider, itemsCount: action.items.length, documentName: action.documentName };
@@ -3155,9 +3157,36 @@ function Invoices() {
   const [provider, setProvider] = useState("");
   const [document, setDocument] = useState(null);
   const [preview, setPreview] = useState("");
-  const [items, setItems] = useState([{ name: "", code: "", qty: 1 }]);
+  const emptyInvoiceItem = { name: "", code: "", category: "", qty: 1 };
+  const [items, setItems] = useState([emptyInvoiceItem]);
   const [extracting, setExtracting] = useState(false);
   const [extractionNote, setExtractionNote] = useState("");
+  const materialCategories = Array.from(new Set(state.materials.map((item) => item.category).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  const findMaterialMatch = (item) => {
+    const name = normalizeHeader(item.name || "");
+    const code = normalizeHeader(item.code || "");
+    return state.materials.find((material) => (code && normalizeHeader(material.code || "") === code) || (name && normalizeHeader(material.name || "") === name));
+  };
+  const previewGeneratedCode = (item, index) => {
+    const match = findMaterialMatch(item);
+    if (match) return match.code;
+    if (item.code) return item.code;
+    const priorGenerated = [];
+    items.slice(0, index).forEach((prior) => {
+      if (prior.code || findMaterialMatch(prior) || !prior.name) return;
+      const code = generateEntityCode({ ...state, materials: [...state.materials, ...priorGenerated] }, "materials", { category: prior.category || "Sin clasificar" });
+      priorGenerated.push({ code, category: prior.category || "Sin clasificar" });
+    });
+    return generateEntityCode({ ...state, materials: [...state.materials, ...priorGenerated] }, "materials", { category: item.category || "Sin clasificar" });
+  };
+  const updateInvoiceItem = (index, patch) => {
+    setItems((current) => current.map((item, ix) => {
+      if (ix !== index) return item;
+      const next = { ...item, ...patch };
+      const match = findMaterialMatch(next);
+      return match ? { ...next, name: match.name, code: match.code, category: match.category || next.category } : next;
+    }));
+  };
   const onFile = (file) => {
     setDocument(file);
     setPreview(file ? URL.createObjectURL(file) : "");
@@ -3182,7 +3211,7 @@ function Invoices() {
         setExtractionNote("Pude leer texto del PDF, pero no identifiqué descripciones de productos. Revisa si la tabla usa otro formato.");
         notify("No se detectaron descripciones automáticamente", "error");
       } else {
-        setItems(parsed);
+        setItems(parsed.map((item) => ({ ...emptyInvoiceItem, ...item })));
         setExtractionNote(`Se detectaron ${parsed.length} descripciones. Ingresa manualmente las cantidades antes de importar.`);
         notify("Descripciones extraídas desde el PDF");
       }
@@ -3194,12 +3223,14 @@ function Invoices() {
     }
   };
   const importInvoice = () => {
-    const valid = items.filter((i) => i.name && Number(i.qty) > 0);
+    const valid = items
+      .map((item, index) => ({ ...item, code: item.code || previewGeneratedCode(item, index), category: item.category || findMaterialMatch(item)?.category || "Sin clasificar" }))
+      .filter((i) => i.name && Number(i.qty) > 0);
     if (!provider || valid.length === 0) return notify("Completa proveedor e ítems", "error");
     dispatch({ type: "IMPORT_INVOICE", provider, documentName: document?.name || "sin-documento", items: valid });
     notify("Factura importada al inventario");
     setProvider("");
-    setItems([{ name: "", code: "", qty: 1 }]);
+    setItems([emptyInvoiceItem]);
     setDocument(null);
     setPreview("");
   };
@@ -3218,9 +3249,32 @@ function Invoices() {
           <p className="text-sm text-slate-400">{extractionNote || "Detecta productos desde PDFs con texto embebido. Para facturas escaneadas se requiere OCR."}</p>
         </div>
         <div className="grid gap-3">
-          {items.map((item, ix) => <div key={ix} className="grid gap-3 md:grid-cols-[1fr_160px_120px_auto]"><input className={inputClass} placeholder="Producto" value={item.name} onChange={(e) => setItems(items.map((x, i) => i === ix ? { ...x, name: e.target.value } : x))} /><input className={inputClass} placeholder="Código opcional" value={item.code} onChange={(e) => setItems(items.map((x, i) => i === ix ? { ...x, code: e.target.value } : x))} /><input className={inputClass} type="number" min="1" value={item.qty} onChange={(e) => setItems(items.map((x, i) => i === ix ? { ...x, qty: Number(e.target.value) } : x))} /><Button variant="ghost" className="px-2 text-red-300" onClick={() => setItems(items.filter((_, i) => i !== ix))}><X size={16} /></Button></div>)}
+          <datalist id="invoice-materials">
+            {state.materials.map((material) => <option key={material.id} value={material.name}>{material.code} · {material.category}</option>)}
+          </datalist>
+          <datalist id="invoice-categories">
+            {materialCategories.map((category) => <option key={category} value={category} />)}
+          </datalist>
+          {items.map((item, ix) => {
+            const match = findMaterialMatch(item);
+            const generatedCode = previewGeneratedCode(item, ix);
+            return (
+              <div key={ix} className="grid gap-2 rounded-md border border-steel-700 bg-steel-850 p-3">
+                <div className="grid gap-3 md:grid-cols-[1fr_190px_180px_120px_auto]">
+                  <input className={inputClass} list="invoice-materials" placeholder="Producto o buscar existente" value={item.name} onChange={(e) => updateInvoiceItem(ix, { name: e.target.value })} />
+                  <input className={inputClass} placeholder={generatedCode ? `Auto: ${generatedCode}` : "Código"} value={item.code} onChange={(e) => updateInvoiceItem(ix, { code: e.target.value })} />
+                  <input className={inputClass} list="invoice-categories" placeholder="Categoría" value={item.category} onChange={(e) => updateInvoiceItem(ix, { category: e.target.value })} />
+                  <input className={inputClass} type="number" min="1" value={item.qty} onChange={(e) => updateInvoiceItem(ix, { qty: Number(e.target.value) })} />
+                  <Button variant="ghost" className="px-2 text-red-300" onClick={() => setItems(items.filter((_, i) => i !== ix))}><X size={16} /></Button>
+                </div>
+                <p className="text-xs text-slate-400">
+                  {match ? `Coincide con inventario: ${match.code} · ${match.category}. Se sumará stock a este registro.` : `Nuevo registro: se importará como ${item.category || "Sin clasificar"} con código ${generatedCode}.`}
+                </p>
+              </div>
+            );
+          })}
         </div>
-        <div className="flex flex-wrap justify-between gap-2"><Button variant="secondary" onClick={() => setItems([...items, { name: "", code: "", qty: 1 }])}><Plus size={16} />Agregar ítem</Button><Button onClick={importInvoice}><PackagePlus size={16} />Importar al inventario</Button></div>
+        <div className="flex flex-wrap justify-between gap-2"><Button variant="secondary" onClick={() => setItems([...items, emptyInvoiceItem])}><Plus size={16} />Agregar ítem</Button><Button onClick={importInvoice}><PackagePlus size={16} />Importar al inventario</Button></div>
       </div>
       <div className="panel">
         <h2 className="section-title"><FileText size={18} />Historial de facturas</h2>
