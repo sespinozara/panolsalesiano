@@ -3193,31 +3193,70 @@ function Invoices() {
     setExtractionNote("");
   };
   const extractItems = async () => {
-    if (!document) return notify("Sube un PDF primero", "error");
-    if (document.type !== "application/pdf") {
-      setExtractionNote("La extracción automática está disponible para PDF con texto. Las imágenes requieren OCR.");
-      return;
-    }
+    if (!document) return notify("Sube un PDF o imagen primero", "error");
     setExtracting(true);
+    const runOcr = async (reason) => {
+      if (!isSupabaseConfigured || !supabase) {
+        setExtractionNote(`${reason} OCR requiere Supabase conectado y la función invoice-ocr desplegada.`);
+        notify("OCR requiere Supabase", "error");
+        return false;
+      }
+      setExtractionNote(`${reason} Ejecutando OCR sobre la imagen de la factura...`);
+      const images = document.type === "application/pdf" || document.name.toLowerCase().endsWith(".pdf")
+        ? await renderPdfPageImages(document, 2)
+        : [await fileToDataUrl(document)];
+      const { data, error } = await supabase.functions.invoke("invoice-ocr", {
+        body: { documentName: document.name, images }
+      });
+      if (error) throw error;
+      if (data?.source === "missing-openai-key") {
+        setExtractionNote("OCR disponible, pero falta configurar OPENAI_API_KEY en Supabase secrets.");
+        notify("Falta clave OCR en Supabase", "error");
+        return false;
+      }
+      if (data?.source === "openai-error" || data?.source === "function-error") {
+        setExtractionNote(`OCR no pudo procesar la factura: ${data.detail || "error desconocido"}`);
+        notify("OCR no pudo leer la factura", "error");
+        return false;
+      }
+      const parsed = Array.isArray(data?.items) ? data.items : [];
+      if (!parsed.length) {
+        setExtractionNote("OCR terminó, pero no encontró productos claros. Puedes cargarlos manualmente.");
+        notify("OCR sin productos detectados", "error");
+        return false;
+      }
+      setItems(parsed.map((item) => ({ ...emptyInvoiceItem, ...item, qty: Number(item.qty) || 1 })));
+      setExtractionNote(`OCR detectó ${parsed.length} ítem(s). Revisa códigos, categorías y cantidades antes de importar.`);
+      notify("OCR completado");
+      return true;
+    };
     try {
+      if (document.type !== "application/pdf" && !document.name.toLowerCase().endsWith(".pdf")) {
+        await runOcr("La imagen requiere OCR.");
+        return;
+      }
       const extractedText = await readPdfText(document);
       if (!extractedText.trim()) {
-        setExtractionNote("El PDF se abrió, pero no entregó texto seleccionable. Si es escaneado o protegido, se necesita OCR.");
-        notify("El PDF no contiene texto extraíble", "error");
+        await runOcr("El PDF se abrió, pero no entregó texto seleccionable.");
         return;
       }
       const parsed = parseInvoiceDescriptions(extractedText);
       if (!parsed.length) {
-        setExtractionNote("Pude leer texto del PDF, pero no identifiqué descripciones de productos. Revisa si la tabla usa otro formato.");
-        notify("No se detectaron descripciones automáticamente", "error");
+        const ocrWorked = await runOcr("Pude leer texto del PDF, pero no identifiqué productos claros.");
+        if (!ocrWorked) notify("No se detectaron descripciones automáticamente", "error");
       } else {
         setItems(parsed.map((item) => ({ ...emptyInvoiceItem, ...item })));
         setExtractionNote(`Se detectaron ${parsed.length} descripciones. Ingresa manualmente las cantidades antes de importar.`);
         notify("Descripciones extraídas desde el PDF");
       }
     } catch (error) {
-      setExtractionNote(`No fue posible leer el PDF: ${error?.message || "error desconocido"}. Si es escaneado, se requiere OCR o carga manual.`);
-      notify("No se pudo leer el PDF", "error");
+      try {
+        const ocrWorked = await runOcr(`No fue posible leer el PDF como texto: ${error?.message || "error desconocido"}.`);
+        if (!ocrWorked) notify("No se pudo leer el PDF", "error");
+      } catch (ocrError) {
+        setExtractionNote(`No fue posible ejecutar OCR: ${ocrError?.message || "error desconocido"}. Puedes usar carga manual.`);
+        notify("No se pudo ejecutar OCR", "error");
+      }
     } finally {
       setExtracting(false);
     }
@@ -3245,8 +3284,8 @@ function Invoices() {
           {preview ? document?.type === "application/pdf" ? <iframe title="Vista previa" src={preview} className="h-80 w-full rounded-md bg-white" /> : <img src={preview} alt="Vista previa de factura" className="max-h-80 rounded-md object-contain" /> : <div className="grid h-44 place-items-center text-slate-400"><Upload size={34} />Vista previa del documento</div>}
         </div>
         <div className="flex flex-wrap items-center gap-3 rounded-md border border-steel-700 bg-steel-850 p-3">
-          <Button variant="secondary" disabled={!document || extracting} onClick={extractItems}><Wand2 size={16} />{extracting ? "Leyendo PDF..." : "Leer PDF automáticamente"}</Button>
-          <p className="text-sm text-slate-400">{extractionNote || "Detecta productos desde PDFs con texto embebido. Para facturas escaneadas se requiere OCR."}</p>
+          <Button variant="secondary" disabled={!document || extracting} onClick={extractItems}><Wand2 size={16} />{extracting ? "Leyendo factura..." : "Leer PDF/OCR automáticamente"}</Button>
+          <p className="text-sm text-slate-400">{extractionNote || "Primero intenta texto embebido. Si la factura es escaneada, usa OCR con IA."}</p>
         </div>
         <div className="grid gap-3">
           <datalist id="invoice-materials">
@@ -3302,6 +3341,33 @@ async function readPdfText(file) {
     if (fallback.trim()) return fallback;
     throw error;
   }
+}
+
+async function renderPdfPageImages(file, maxPages = 2) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const pdf = await pdfjsLib.getDocument({ data: bytes.slice() }).promise;
+  const pageCount = Math.min(pdf.numPages, maxPages);
+  const images = [];
+  for (let index = 1; index <= pageCount; index += 1) {
+    const page = await pdf.getPage(index);
+    const viewport = page.getViewport({ scale: 2.2 });
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+    canvas.width = Math.round(viewport.width);
+    canvas.height = Math.round(viewport.height);
+    await page.render({ canvasContext: context, viewport }).promise;
+    images.push(canvas.toDataURL("image/jpeg", 0.86));
+  }
+  return images;
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error("No se pudo leer la imagen"));
+    reader.readAsDataURL(file);
+  });
 }
 
 async function readLessonContextFile(file) {
