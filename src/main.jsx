@@ -6,6 +6,7 @@ import {
   BarChart3,
   Bell,
   Boxes,
+  CalendarDays,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -74,6 +75,7 @@ const permissionOptions = [
   ["people", "Personas"],
   ["inventory", "Inventario"],
   ["keys", "Control de llaves"],
+  ["workshop", "Reservas taller"],
   ["loans", "Entrega y recepción"],
   ["requests", "Solicitudes docentes"],
   ["messages", "Mensajes"],
@@ -281,6 +283,24 @@ const defaultKeys = [
   observation
 }));
 
+const defaultWorkshopRooms = [
+  { id: "workshop-room-1", name: "Sala 1", active: true },
+  { id: "workshop-room-2", name: "Sala 2", active: true }
+];
+
+const defaultWorkshopSlots = [
+  "08:00 - 08:45",
+  "08:45 - 09:30",
+  "09:45 - 10:30",
+  "10:35 - 11:20",
+  "11:20 - 12:05",
+  "12:05 - 12:50",
+  "13:00 - 14:00",
+  "14:00 - 15:00",
+  "15:00 - 16:00",
+  "16:00 - 17:00"
+];
+
 function createEmptyState() {
   return {
     settings: { criticalThreshold: 5, theme: "dark", operatorName: "Encargado de pañol", operatorRole: "pañolero" },
@@ -290,6 +310,8 @@ function createEmptyState() {
     materials: [],
     tools: [],
     keys: defaultKeys,
+    workshopRooms: defaultWorkshopRooms,
+    workshopReservations: [],
     loans: [],
     requests: [],
     portalUsers: [],
@@ -320,6 +342,8 @@ function removeDemoData(state) {
     materials: (state.materials || []).filter((item) => !demoMaterialCodes.has(item.code)),
     tools: (state.tools || []).filter((item) => !demoToolCodes.has(item.code)),
     keys: state.keys || defaultKeys,
+    workshopRooms: state.workshopRooms || defaultWorkshopRooms,
+    workshopReservations: state.workshopReservations || [],
     loans: (state.loans || []).filter((item) => !demoRequesterNames.has(item.requesterName)),
     requests: state.requests || [],
     portalUsers: state.portalUsers || [],
@@ -343,7 +367,7 @@ function loadInitialState() {
   }
 }
 
-const cloudMergeCollections = ["students", "teachers", "materials", "tools", "keys", "loans", "requests", "invoices", "movements", "messages", "portalUsers", "appUsers", "auditLog", "backups"];
+const cloudMergeCollections = ["students", "teachers", "materials", "tools", "keys", "workshopRooms", "workshopReservations", "loans", "requests", "invoices", "movements", "messages", "portalUsers", "appUsers", "auditLog", "backups"];
 
 function mergeRowsById(remoteRows = [], localRows = []) {
   const merged = new Map();
@@ -386,6 +410,37 @@ function reducer(state, action) {
       const keys = state.keys || [];
       return { ...state, keys: keys.some((item) => item.id === row.id) ? keys.map((item) => item.id === row.id ? row : item) : [row, ...keys] };
     }
+    case "UPSERT_WORKSHOP_ROOM": {
+      const row = action.row.id ? action.row : { ...action.row, id: uid("wsroom"), active: true };
+      const rooms = state.workshopRooms || defaultWorkshopRooms;
+      return { ...state, workshopRooms: rooms.some((item) => item.id === row.id) ? rooms.map((item) => item.id === row.id ? row : item) : [row, ...rooms] };
+    }
+    case "CREATE_WORKSHOP_RESERVATION": {
+      const reservation = {
+        ...action.reservation,
+        id: uid("wsres"),
+        folio: nextFolio(state.workshopReservations || [], "TAL", action.reservation.date || today()),
+        createdAt: today(),
+        status: "activa"
+      };
+      return {
+        ...state,
+        workshopReservations: [reservation, ...(state.workshopReservations || [])],
+        movements: [{
+          id: uid("mov"),
+          date: today(),
+          type: "reserva",
+          detail: `${reservation.folio} · ${reservation.roomName}`,
+          requesterName: reservation.teacherName,
+          status: "activa"
+        }, ...(state.movements || [])]
+      };
+    }
+    case "CANCEL_WORKSHOP_RESERVATION":
+      return {
+        ...state,
+        workshopReservations: (state.workshopReservations || []).map((reservation) => reservation.id === action.id ? { ...reservation, status: "cancelada", cancelReason: action.reason || "", cancelledAt: today() } : reservation)
+      };
     case "CHECKOUT_KEY": {
       const key = (state.keys || []).find((item) => item.id === action.id);
       return {
@@ -572,6 +627,9 @@ function auditEntryForAction(action, state) {
     SEND_MESSAGE: `Mensaje ${action.message?.from || ""} -> ${action.message?.to || ""}`,
     DELETE_MESSAGE_THREAD: "Conversacion eliminada",
     APPROVE_REQUEST: "Solicitud aprobada",
+    UPSERT_WORKSHOP_ROOM: `Sala de taller guardada: ${action.row?.name || ""}`,
+    CREATE_WORKSHOP_RESERVATION: `Reserva de taller creada: ${action.reservation?.teacherName || ""}`,
+    CANCEL_WORKSHOP_RESERVATION: "Reserva de taller cancelada",
     CREATE_LOAN: `Prestamo registrado para ${action.loan?.requesterName || "solicitante"}${action.loan?.folio ? ` (${action.loan.folio})` : ""}`,
     RETURN_LOAN: "Devolucion registrada",
     IMPORT_INVOICE: `Factura importada: ${action.provider || ""}`,
@@ -967,6 +1025,7 @@ function Layout({ section, setSection, currentUser, onLogout }) {
     ["people", "Personas", UsersRound],
     ["inventory", "Inventario", Boxes],
     ["keys", "Control de llaves", KeyRound],
+    ["workshop", "Reservas taller", CalendarDays],
     ["loans", "Entrega y recepción", ClipboardList],
     ["requests", "Solicitudes docentes", Inbox],
     ["messages", "Mensajes", MessageSquare],
@@ -983,6 +1042,7 @@ function Layout({ section, setSection, currentUser, onLogout }) {
     people: "Alumnos y profesores",
     inventory: "Materiales y herramientas",
     keys: "Control de llaves",
+    workshop: "Reservas taller mecánico",
     loans: "Entrega y recepción",
     requests: "Solicitudes docentes",
     messages: "Mensajes",
@@ -1112,6 +1172,7 @@ function Layout({ section, setSection, currentUser, onLogout }) {
           {section === "alerts" && <AdminAlertsCenter setSection={setSection} />}
           {section === "people" && <People />}
           {section === "inventory" && <Inventory />}
+          {section === "workshop" && <WorkshopReservations currentUser={currentUser} />}
           {section === "loans" && <Loans initialView={loanInitialView} returnFocusLoanId={returnFocusLoanId} />}
           {section === "requests" && <TeacherRequestsInbox />}
           {section === "messages" && <MessagesCenter focusedTeacherId={focusedTeacherId} />}
@@ -3751,6 +3812,179 @@ function ReportPlainTable({ rows, columns }) {
   return <table className="report-table"><thead><tr>{columns.map(([, label]) => <th key={label}>{label}</th>)}</tr></thead><tbody>{rows.length ? rows.map((row, ix) => <tr key={ix}>{columns.map(([key]) => <td key={key}>{renderCell(row, key)}</td>)}</tr>) : <tr><td colSpan={columns.length}>Sin registros</td></tr>}</tbody></table>;
 }
 
+function WorkshopReservations({ currentUser }) {
+  const { state, dispatch, notify } = useApp();
+  const isTeacher = currentUser?.role === "docente";
+  const teacher = isTeacher ? getTeacherForAppUser(state, currentUser) : null;
+  const rooms = (state.workshopRooms?.length ? state.workshopRooms : defaultWorkshopRooms).filter((room) => room.active !== false);
+  const reservations = state.workshopReservations || [];
+  const [tab, setTab] = useState("new");
+  const [roomId, setRoomId] = useState(rooms[0]?.id || "");
+  const [date, setDate] = useState(today());
+  const [slots, setSlots] = useState([]);
+  const [course, setCourse] = useState("");
+  const [activity, setActivity] = useState("");
+  const [resource, setResource] = useState("");
+  const [teacherId, setTeacherId] = useState("");
+  const [newRoomName, setNewRoomName] = useState("");
+  const room = rooms.find((item) => item.id === roomId) || rooms[0];
+  const teacherOptions = useMemo(() => {
+    const fromProfiles = getAppUsers(state)
+      .filter((user) => user.active !== false && user.permissions?.includes("workshop"))
+      .map((user) => getTeacherForAppUser(state, user));
+    const merged = new Map();
+    [...(state.teachers || []), ...fromProfiles].forEach((person) => merged.set(person.id || person.email || person.name, person));
+    return [...merged.values()];
+  }, [state.appUsers, state.teachers]);
+  const selectedTeacher = isTeacher ? teacher : teacherOptions.find((person) => person.id === teacherId) || teacherOptions[0];
+  const visibleReservations = [...(isTeacher ? reservations.filter((reservation) => reservation.teacherId === teacher.id || normalizeHeader(reservation.teacherEmail || "") === normalizeHeader(teacher.email || "") || normalizeHeader(reservation.teacherName || "") === normalizeHeader(teacher.name)) : reservations)]
+    .sort((a, b) => `${b.date} ${b.createdAt}`.localeCompare(`${a.date} ${a.createdAt}`));
+  const upcomingReservations = reservations
+    .filter((reservation) => reservation.status !== "cancelada" && reservation.date >= today())
+    .sort((a, b) => `${a.date} ${a.slots?.[0] || ""}`.localeCompare(`${b.date} ${b.slots?.[0] || ""}`));
+  const conflicts = reservations.filter((reservation) => (
+    reservation.status !== "cancelada" &&
+    reservation.date === date &&
+    reservation.roomId === room?.id &&
+    (reservation.slots || []).some((slot) => slots.includes(slot))
+  ));
+  const toggleSlot = (slot) => setSlots(slots.includes(slot) ? slots.filter((item) => item !== slot) : [...slots, slot]);
+  const createReservation = () => {
+    if (!room || !selectedTeacher || !date || !slots.length || !course.trim() || !activity.trim()) return notify("Completa sala, fecha, bloque, curso y actividad", "error");
+    if (conflicts.length) return notify("Ese bloque ya está reservado para la sala seleccionada", "error");
+    dispatch({
+      type: "CREATE_WORKSHOP_RESERVATION",
+      reservation: {
+        roomId: room.id,
+        roomName: room.name,
+        date,
+        slots: [...slots].sort(),
+        course: course.trim(),
+        teacherId: selectedTeacher.id,
+        teacherName: selectedTeacher.name,
+        teacherEmail: selectedTeacher.email || "",
+        activity: activity.trim(),
+        resource: resource.trim()
+      }
+    });
+    notify("Reserva de taller registrada");
+    setSlots([]);
+    setCourse("");
+    setActivity("");
+    setResource("");
+    setTab("mine");
+  };
+  const addRoom = () => {
+    if (!newRoomName.trim()) return;
+    dispatch({ type: "UPSERT_WORKSHOP_ROOM", row: { name: newRoomName.trim(), active: true } });
+    notify("Sala agregada");
+    setNewRoomName("");
+  };
+  return (
+    <div className="grid gap-5">
+      <div className="flex flex-wrap gap-2">
+        {[["new", CalendarDays, "Nueva reserva"], ["mine", History, isTeacher ? "Mis reservas" : "Reservas"], ["calendar", ClipboardList, "Calendario"]].map(([id, Icon, label]) => (
+          <Button key={id} variant={tab === id ? "primary" : "secondary"} onClick={() => setTab(id)}><Icon size={16} />{label}</Button>
+        ))}
+      </div>
+      {tab === "new" && (
+        <section className="panel grid gap-5">
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Field label="Sala de taller">
+              <select className={inputClass} value={roomId} onChange={(e) => setRoomId(e.target.value)}>
+                {rooms.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>
+            </Field>
+            {!isTeacher && (
+              <Field label="Profesor responsable">
+                <select className={inputClass} value={selectedTeacher?.id || ""} onChange={(e) => setTeacherId(e.target.value)}>
+                  {teacherOptions.map((person) => <option key={person.id || person.email || person.name} value={person.id}>{person.name}{person.email ? ` · ${person.email}` : ""}</option>)}
+                </select>
+              </Field>
+            )}
+            <Field label="Fecha de la actividad">
+              <input className={`${inputClass} cursor-pointer`} type="date" value={date} onClick={(e) => e.currentTarget.showPicker?.()} onFocus={(e) => e.currentTarget.showPicker?.()} onChange={(e) => setDate(e.target.value)} />
+            </Field>
+            <Field label="Curso o grupo">
+              <input className={inputClass} value={course} onChange={(e) => setCourse(e.target.value)} placeholder="Ej: 4° Medio A grupo 1" />
+            </Field>
+          </div>
+          <div>
+            <p className="mb-2 text-sm font-semibold text-slate-200">Bloques horarios</p>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+              {defaultWorkshopSlots.map((slot) => (
+                <button key={slot} type="button" onClick={() => toggleSlot(slot)} className={`rounded-md border px-3 py-2 text-left text-sm font-semibold transition ${slots.includes(slot) ? "border-safety-500 bg-safety-500 text-steel-950" : "border-steel-700 bg-steel-850 text-slate-200 hover:border-safety-500"}`}>
+                  {slot}
+                </button>
+              ))}
+            </div>
+            {conflicts.length > 0 && (
+              <div className="mt-3 rounded-md border border-red-500/50 bg-red-500/10 p-3 text-sm text-red-100">
+                Ya existe reserva: {conflicts.map((item) => `${item.teacherName} · ${item.slots.join(", ")}`).join(" / ")}
+              </div>
+            )}
+          </div>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Field label="Actividad">
+              <textarea className={`${inputClass} min-h-24 resize-y`} value={activity} onChange={(e) => setActivity(e.target.value)} placeholder="Describe la actividad del taller" />
+            </Field>
+            <Field label="Recurso / observación">
+              <textarea className={`${inputClass} min-h-24 resize-y`} value={resource} onChange={(e) => setResource(e.target.value)} placeholder="Equipo, sala, herramientas o comentario adicional" />
+            </Field>
+          </div>
+          <div className="flex justify-end">
+            <Button onClick={createReservation}><CalendarDays size={16} />Registrar reserva</Button>
+          </div>
+        </section>
+      )}
+      {tab === "mine" && (
+        <section className="panel grid gap-3">
+          <h2 className="section-title"><History size={18} />{isTeacher ? "Mis reservas anteriores" : "Reservas registradas"}</h2>
+          {visibleReservations.length === 0 && <p className="rounded-md border border-steel-700 bg-steel-850 p-4 text-sm text-slate-400">Sin reservas registradas.</p>}
+          {visibleReservations.map((reservation) => (
+            <div key={reservation.id} className={`rounded-md border p-4 ${reservation.status === "cancelada" ? "border-red-500/40 bg-red-500/10" : "border-steel-700 bg-steel-850"}`}>
+              <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="font-bold text-white">{reservation.folio || displayFolio(reservation, "TAL")} · {reservation.roomName}</p>
+                  <p className="text-sm text-slate-300">{formatDate(reservation.date)} · {(reservation.slots || []).join(", ")} · {reservation.course}</p>
+                  <p className="mt-2 text-sm text-slate-200">{reservation.activity}</p>
+                  {reservation.resource && <p className="mt-1 text-xs text-slate-400">{reservation.resource}</p>}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone={reservation.status === "cancelada" ? "red" : "green"}>{reservation.status}</Badge>
+                  {!isTeacher && <Badge tone="blue">{reservation.teacherName}</Badge>}
+                  {reservation.status !== "cancelada" && <Button variant="secondary" onClick={() => { dispatch({ type: "CANCEL_WORKSHOP_RESERVATION", id: reservation.id, reason: "Cancelada desde sistema" }); notify("Reserva cancelada"); }}>Cancelar</Button>}
+                </div>
+              </div>
+            </div>
+          ))}
+        </section>
+      )}
+      {tab === "calendar" && (
+        <section className="panel grid gap-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <h2 className="section-title"><ClipboardList size={18} />Calendario de taller</h2>
+              <p className="text-sm text-slate-400">Próximas reservas activas por fecha, sala y bloque.</p>
+            </div>
+            {!isTeacher && (
+              <div className="grid gap-2 sm:grid-cols-[220px_auto]">
+                <input className={inputClass} value={newRoomName} onChange={(e) => setNewRoomName(e.target.value)} placeholder="Nueva sala" />
+                <Button variant="secondary" onClick={addRoom}><Plus size={16} />Agregar sala</Button>
+              </div>
+            )}
+          </div>
+          <DataTable
+            rows={upcomingReservations.map((reservation) => ({ ...reservation, folioText: reservation.folio || displayFolio(reservation, "TAL"), dateText: formatDate(reservation.date), slotsText: (reservation.slots || []).join(", ") }))}
+            columns={[["folioText", "Folio"], ["dateText", "Fecha"], ["slotsText", "Bloque"], ["roomName", "Sala"], ["teacherName", "Profesor"], ["course", "Curso"], ["activity", "Actividad"]]}
+            compact
+          />
+        </section>
+      )}
+    </div>
+  );
+}
+
 function SettingsPage() {
   const { state, dispatch, notify, cloudStatus } = useApp();
   const isLight = state.settings.theme === "light";
@@ -4231,6 +4465,7 @@ function TeacherWorkspace({ currentUser, onLogout }) {
   const { state, dispatch, notify } = useApp();
   const [tab, setTab] = useState("home");
   const teacher = getTeacherForAppUser(state, currentUser);
+  const canReserveWorkshop = currentUser?.permissions?.includes("workshop");
   const [query, setQuery] = useState("");
   const [cart, setCart] = useState([]);
   const [cartOpen, setCartOpen] = useState(false);
@@ -4428,7 +4663,7 @@ function TeacherWorkspace({ currentUser, onLogout }) {
       </header>
       <main className="app-main mx-auto grid max-w-7xl gap-4 p-3 md:gap-6 md:p-8">
         <div className="mobile-nav -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
-          {[["home", LayoutDashboard, "Inicio"], ["inventory", Boxes, "Inventario"], ["history", History, "Mis solicitudes"]].map(([id, Icon, label]) => <Button key={id} variant={tab === id ? "primary" : "secondary"} onClick={() => setTab(id)} className="shrink-0 whitespace-nowrap"><Icon size={16} />{label}</Button>)}
+          {[["home", LayoutDashboard, "Inicio"], ["inventory", Boxes, "Inventario"], ...(canReserveWorkshop ? [["workshop", CalendarDays, "Reservas taller"]] : []), ["history", History, "Mis solicitudes"]].map(([id, Icon, label]) => <Button key={id} variant={tab === id ? "primary" : "secondary"} onClick={() => setTab(id)} className="shrink-0 whitespace-nowrap"><Icon size={16} />{label}</Button>)}
         </div>
         {lastAdded && (
           <div className="cart-added-banner rounded-md border border-sky-500/60 bg-sky-500/15 px-4 py-3 text-sm font-semibold text-sky-100">
@@ -4597,6 +4832,7 @@ function TeacherWorkspace({ currentUser, onLogout }) {
           </div>
         )}
         {tab === "history" && <div className="panel"><DataTable rows={myRequests.map((request) => ({ ...request, folioText: displayFolio(request, "SOL"), itemsText: request.items.map((item) => `${item.name} (${item.qty}${item.prepStatus ? `, ${item.prepStatus}` : ""})`).join(", ") }))} columns={[["folioText", "Folio"], ["createdAt", "Fecha"], ["expectedDate", "Fecha requerida"], ["status", "Estado"], ["itemsText", "Ítems"], ["reviewNotes", "Respuesta pañol"]]} actions={(request) => <Button variant="secondary" onClick={() => { setChatRequestId(request.id); setChatOpen(true); }}><MessageSquare size={16} />Consultar</Button>} /></div>}
+        {tab === "workshop" && canReserveWorkshop && <WorkshopReservations currentUser={currentUser} />}
         {chatOpen && (
           <Modal title="Chat con pañol" onClose={() => setChatOpen(false)}>
           <div className="grid gap-4">
