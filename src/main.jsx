@@ -300,6 +300,12 @@ const defaultWorkshopSlots = [
   "15:00 - 16:00",
   "16:00 - 17:00"
 ];
+const defaultWorkshopTeacherEmails = [
+  "fjara@salesianoconcepcion.cl",
+  "pherrera@salesianoconcepcion.cl",
+  "fiturra@salesianoconcepcion.cl",
+  "coordtp@salesianoconcepcion.cl"
+];
 
 function createEmptyState() {
   return {
@@ -3816,6 +3822,7 @@ function WorkshopReservations({ currentUser }) {
   const { state, dispatch, notify } = useApp();
   const isTeacher = currentUser?.role === "docente";
   const teacher = isTeacher ? getTeacherForAppUser(state, currentUser) : null;
+  const hasWorkshopAccess = userHasWorkshopAccess(state, currentUser);
   const rooms = (state.workshopRooms?.length ? state.workshopRooms : defaultWorkshopRooms).filter((room) => room.active !== false);
   const reservations = state.workshopReservations || [];
   const [tab, setTab] = useState("new");
@@ -3830,7 +3837,7 @@ function WorkshopReservations({ currentUser }) {
   const room = rooms.find((item) => item.id === roomId) || rooms[0];
   const teacherOptions = useMemo(() => {
     const fromProfiles = getAppUsers(state)
-      .filter((user) => user.active !== false && user.permissions?.includes("workshop"))
+      .filter((user) => user.active !== false && userHasWorkshopAccess(state, user))
       .map((user) => getTeacherForAppUser(state, user));
     const merged = new Map();
     [...(state.teachers || []), ...fromProfiles].forEach((person) => merged.set(person.id || person.email || person.name, person));
@@ -3880,6 +3887,7 @@ function WorkshopReservations({ currentUser }) {
     notify("Sala agregada");
     setNewRoomName("");
   };
+  if (isTeacher && !hasWorkshopAccess) return <EmptyState text="Tu perfil todavia no tiene habilitadas las reservas del taller." />;
   return (
     <div className="grid gap-5">
       <div className="flex flex-wrap gap-2">
@@ -4464,8 +4472,9 @@ function statefulNameScore(name, requests) {
 function TeacherWorkspace({ currentUser, onLogout }) {
   const { state, dispatch, notify } = useApp();
   const [tab, setTab] = useState("home");
-  const teacher = getTeacherForAppUser(state, currentUser);
-  const canReserveWorkshop = currentUser?.permissions?.includes("workshop");
+  const effectiveUser = getFreshAppUser(state, currentUser);
+  const teacher = getTeacherForAppUser(state, effectiveUser);
+  const canReserveWorkshop = userHasWorkshopAccess(state, effectiveUser);
   const [query, setQuery] = useState("");
   const [cart, setCart] = useState([]);
   const [cartOpen, setCartOpen] = useState(false);
@@ -4897,6 +4906,38 @@ function getTeacherForAppUser(state, user) {
   const username = normalizeHeader(user.username || "");
   const teacher = state.teachers.find((person) => normalizeHeader(person.email?.split("@")[0] || "") === username || normalizeHeader(person.email || "") === username || normalizeHeader(person.name) === normalizeHeader(user.name));
   return teacher || { id: `app-${user.id}`, name: user.name, email: "", department: user.role || "Docente" };
+}
+
+function getFreshAppUser(state, user) {
+  if (!user) return null;
+  const users = getAppUsers(state);
+  const normalizedId = normalizeHeader(user.id || "");
+  const normalizedEmail = normalizeHeader(user.email || "");
+  const normalizedUsername = normalizeHeader(user.username || "");
+  return users.find((item) => item.active !== false && (
+    normalizeHeader(item.id || "") === normalizedId ||
+    (normalizedEmail && normalizeHeader(item.email || "") === normalizedEmail) ||
+    (normalizedUsername && normalizeHeader(item.username || "") === normalizedUsername)
+  )) || user;
+}
+
+function userHasWorkshopAccess(state, user) {
+  const freshUser = getFreshAppUser(state, user);
+  if (freshUser?.permissions?.includes("workshop")) return true;
+  const teacher = getTeacherForAppUser(state, freshUser || user || {});
+  const allowedEmails = defaultWorkshopTeacherEmails.map((email) => normalizeHeader(email));
+  const emailKeys = [
+    freshUser?.email,
+    freshUser?.username?.includes("@") ? freshUser.username : "",
+    teacher?.email
+  ].map((value) => normalizeHeader(value || "")).filter(Boolean);
+  const usernameKeys = [
+    freshUser?.username,
+    freshUser?.email?.split("@")[0],
+    teacher?.email?.split("@")[0]
+  ].map((value) => normalizeHeader(value || "")).filter(Boolean);
+  return emailKeys.some((email) => allowedEmails.includes(email)) ||
+    usernameKeys.some((username) => allowedEmails.some((email) => email.split("@")[0] === username));
 }
 
 createRoot(document.getElementById("root")).render(<App />);
