@@ -4027,8 +4027,8 @@ function WorkshopReservations({ currentUser }) {
             })}
           </div>
           <DataTable
-            rows={upcomingReservations.map((reservation) => ({ ...reservation, folioText: reservation.folio || displayFolio(reservation, "TAL"), dateText: formatDate(reservation.date), slotsText: asArray(reservation.slots).join(", ") }))}
-            columns={[["folioText", "Folio"], ["dateText", "Fecha"], ["slotsText", "Bloque"], ["roomName", "Sala"], ["teacherName", "Profesor"], ["course", "Curso"], ["activity", "Actividad"]]}
+            rows={upcomingReservations.map((reservation) => ({ ...reservation, folioText: reservation.folio || displayFolio(reservation, "TAL"), fechaTexto: formatDate(reservation.date), slotsText: asArray(reservation.slots).join(", ") }))}
+            columns={[["folioText", "Folio"], ["fechaTexto", "Fecha"], ["slotsText", "Bloque"], ["roomName", "Sala"], ["teacherName", "Profesor"], ["course", "Curso"], ["activity", "Actividad"]]}
             compact
           />
         </section>
