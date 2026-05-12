@@ -97,6 +97,7 @@ const getAppUsers = (state) => {
 
 const uid = (prefix) => `${prefix}-${Math.random().toString(36).slice(2, 8)}-${Date.now().toString(36)}`;
 const today = () => new Date().toISOString().slice(0, 10);
+const asArray = (value) => Array.isArray(value) ? value : value ? [value] : [];
 const folioYear = (date = today()) => String(date || today()).slice(0, 4);
 const nextFolio = (items, prefix, date = today()) => {
   const year = folioYear(date);
@@ -3834,6 +3835,7 @@ function WorkshopReservations({ currentUser }) {
   const [resource, setResource] = useState("");
   const [teacherId, setTeacherId] = useState("");
   const [newRoomName, setNewRoomName] = useState("");
+  const [calendarDate, setCalendarDate] = useState(today());
   const room = rooms.find((item) => item.id === roomId) || rooms[0];
   const teacherOptions = useMemo(() => {
     const fromProfiles = getAppUsers(state)
@@ -3848,12 +3850,13 @@ function WorkshopReservations({ currentUser }) {
     .sort((a, b) => `${b.date} ${b.createdAt}`.localeCompare(`${a.date} ${a.createdAt}`));
   const upcomingReservations = reservations
     .filter((reservation) => reservation.status !== "cancelada" && reservation.date >= today())
-    .sort((a, b) => `${a.date} ${a.slots?.[0] || ""}`.localeCompare(`${b.date} ${b.slots?.[0] || ""}`));
+    .sort((a, b) => `${a.date} ${asArray(a.slots)[0] || ""}`.localeCompare(`${b.date} ${asArray(b.slots)[0] || ""}`));
+  const calendarReservations = reservations.filter((reservation) => reservation.status !== "cancelada" && reservation.date === calendarDate);
   const conflicts = reservations.filter((reservation) => (
     reservation.status !== "cancelada" &&
     reservation.date === date &&
     reservation.roomId === room?.id &&
-    (reservation.slots || []).some((slot) => slots.includes(slot))
+    asArray(reservation.slots).some((slot) => slots.includes(slot))
   ));
   const toggleSlot = (slot) => setSlots(slots.includes(slot) ? slots.filter((item) => item !== slot) : [...slots, slot]);
   const createReservation = () => {
@@ -3928,7 +3931,7 @@ function WorkshopReservations({ currentUser }) {
             </div>
             {conflicts.length > 0 && (
               <div className="mt-3 rounded-md border border-red-500/50 bg-red-500/10 p-3 text-sm text-red-100">
-                Ya existe reserva: {conflicts.map((item) => `${item.teacherName} · ${item.slots.join(", ")}`).join(" / ")}
+                Ya existe reserva: {conflicts.map((item) => `${item.teacherName} · ${asArray(item.slots).join(", ")}`).join(" / ")}
               </div>
             )}
           </div>
@@ -3954,7 +3957,7 @@ function WorkshopReservations({ currentUser }) {
               <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
                 <div>
                   <p className="font-bold text-white">{reservation.folio || displayFolio(reservation, "TAL")} · {reservation.roomName}</p>
-                  <p className="text-sm text-slate-300">{formatDate(reservation.date)} · {(reservation.slots || []).join(", ")} · {reservation.course}</p>
+                  <p className="text-sm text-slate-300">{formatDate(reservation.date)} · {asArray(reservation.slots).join(", ")} · {reservation.course}</p>
                   <p className="mt-2 text-sm text-slate-200">{reservation.activity}</p>
                   {reservation.resource && <p className="mt-1 text-xs text-slate-400">{reservation.resource}</p>}
                 </div>
@@ -3973,7 +3976,7 @@ function WorkshopReservations({ currentUser }) {
           <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
             <div>
               <h2 className="section-title"><ClipboardList size={18} />Calendario de taller</h2>
-              <p className="text-sm text-slate-400">Próximas reservas activas por fecha, sala y bloque.</p>
+              <p className="text-sm text-slate-400">Selecciona un día para revisar disponibilidad por sala y bloque.</p>
             </div>
             {!isTeacher && (
               <div className="grid gap-2 sm:grid-cols-[220px_auto]">
@@ -3982,8 +3985,49 @@ function WorkshopReservations({ currentUser }) {
               </div>
             )}
           </div>
+          <div className="grid gap-3 lg:grid-cols-[260px_1fr]">
+            <Field label="Día del calendario">
+              <input className={`${inputClass} cursor-pointer`} type="date" value={calendarDate} onClick={(e) => e.currentTarget.showPicker?.()} onFocus={(e) => e.currentTarget.showPicker?.()} onChange={(e) => setCalendarDate(e.target.value)} />
+            </Field>
+            <div className="rounded-md border border-blue-500/30 bg-blue-500/10 p-3 text-sm text-slate-200">
+              {calendarReservations.length ? `${calendarReservations.length} reserva(s) activa(s) para ${formatDate(calendarDate)}.` : `No hay reservas activas para ${formatDate(calendarDate)}.`}
+            </div>
+          </div>
+          <div className="grid gap-4 xl:grid-cols-2">
+            {rooms.map((item) => {
+              const roomReservations = calendarReservations.filter((reservation) => reservation.roomId === item.id || reservation.roomName === item.name);
+              return (
+                <div key={item.id} className="rounded-lg border border-steel-700 bg-steel-850 p-4">
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <h3 className="font-bold text-white">{item.name}</h3>
+                    <Badge tone={roomReservations.length ? "amber" : "green"}>{roomReservations.length ? `${roomReservations.length} reserva(s)` : "Disponible"}</Badge>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {defaultWorkshopSlots.map((slot) => {
+                      const reservation = roomReservations.find((entry) => asArray(entry.slots).includes(slot));
+                      return (
+                        <div key={slot} className={`rounded-md border p-3 ${reservation ? "border-red-500/50 bg-red-500/10" : "border-emerald-500/40 bg-emerald-500/10"}`}>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-sm font-bold text-white">{slot}</span>
+                            <Badge tone={reservation ? "red" : "green"}>{reservation ? "Reservado" : "Libre"}</Badge>
+                          </div>
+                          {reservation ? (
+                            <div className="mt-2 text-xs text-slate-300">
+                              <p className="font-semibold text-white">{reservation.teacherName}</p>
+                              <p>{reservation.course}</p>
+                              <p>{reservation.activity}</p>
+                            </div>
+                          ) : <p className="mt-2 text-xs text-slate-400">Sin uso registrado.</p>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
           <DataTable
-            rows={upcomingReservations.map((reservation) => ({ ...reservation, folioText: reservation.folio || displayFolio(reservation, "TAL"), dateText: formatDate(reservation.date), slotsText: (reservation.slots || []).join(", ") }))}
+            rows={upcomingReservations.map((reservation) => ({ ...reservation, folioText: reservation.folio || displayFolio(reservation, "TAL"), dateText: formatDate(reservation.date), slotsText: asArray(reservation.slots).join(", ") }))}
             columns={[["folioText", "Folio"], ["dateText", "Fecha"], ["slotsText", "Bloque"], ["roomName", "Sala"], ["teacherName", "Profesor"], ["course", "Curso"], ["activity", "Actividad"]]}
             compact
           />
