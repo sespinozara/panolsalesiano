@@ -2042,6 +2042,8 @@ function PersonProfileModal({ person, type, onClose }) {
   const activeLoans = loans.filter((loan) => loan.status === "activo");
   const requests = type === "teacher" ? (state.requests || []).filter((request) => request.requesterId === person.id || normalizeHeader(request.requesterName) === normalizeHeader(person.name)) : [];
   const messages = type === "teacher" ? (state.messages || []).filter((msg) => msg.teacherId === person.id) : [];
+  const pendingReturnLoans = type === "teacher" ? getTeacherPendingReturnLoans(state.loans || [], person) : [];
+  const pendingReturnsMailto = type === "teacher" ? buildPendingReturnsMailto(person, pendingReturnLoans) : "";
   const pendingNotice = getPendingLoanNotice(state.loans, type, person.id);
   const blockReason = getBlockReason(state.loans, type, person.id);
   return (
@@ -2055,6 +2057,15 @@ function PersonProfileModal({ person, type, onClose }) {
         </div>
         {blockReason && <div className="rounded-md border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200">{blockReason}</div>}
         {!blockReason && pendingNotice && <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">{pendingNotice} El servicio sigue habilitado para profesores.</div>}
+        {type === "teacher" && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-safety-500/35 bg-safety-500/10 p-3">
+            <div>
+              <p className="font-bold text-white">Recordatorio de devoluciones pendientes</p>
+              <p className="text-sm text-slate-400">{pendingReturnLoans.length ? `${pendingReturnLoans.length} prÃ©stamo(s) con elementos pendientes para informar por correo.` : "Este profesor no tiene elementos pendientes de devoluciÃ³n."}</p>
+            </div>
+            <Button variant="secondary" disabled={!person.email || pendingReturnLoans.length === 0} onClick={() => { window.location.href = pendingReturnsMailto; }}><FileCheck size={16} />Generar correo</Button>
+          </div>
+        )}
         <div className="grid gap-4 xl:grid-cols-2">
           <section className="grid gap-3">
             <h3 className="section-title"><ClipboardList size={18} />Préstamos</h3>
@@ -2546,6 +2557,30 @@ function buildReceiptMailto(loan) {
     "Este comprobante fue generado por el sistema de Pañol Central."
   ].join("\n");
   return `mailto:${encodeURIComponent(loan.requesterEmail || "")}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
+function buildPendingReturnsMailto(teacher, pendingLoans = []) {
+  const recipient = teacher?.email || "";
+  const totalItems = pendingLoans.reduce((total, loan) => total + loan.returnableItems.reduce((sum, item) => sum + Number(item.qty || 1), 0), 0);
+  const subject = "Recordatorio de materiales pendientes - Pañol Central";
+  const body = [
+    `Estimado/a ${teacher?.name || "docente"},`,
+    "",
+    "Junto con saludar, recordamos bajar a pañol lo antes posible los siguientes materiales/herramientas que se encuentran pendientes de devolución:",
+    "",
+    ...pendingLoans.flatMap((loan) => [
+      `${loan.folioText || displayFolio(loan, "PRE")} - solicitado/entregado el ${formatDate(loan.createdAt)} - fecha de devolución esperada: ${formatDate(loan.expectedReturn)}${isOverdue(loan) ? ` (${overdueDays(loan.expectedReturn)} día(s) de atraso)` : ""}`,
+      ...loan.returnableItems.map((item) => `  - ${item.name} | Código: ${item.code || "s/c"} | Cantidad: ${item.qty}`),
+      ""
+    ]),
+    `Total pendiente: ${totalItems} elemento(s) asociado(s) a ${pendingLoans.length} préstamo(s).`,
+    "",
+    "Por favor, regularizar la devolución en Pañol Central a la brevedad.",
+    "",
+    "Saludos cordiales,",
+    "PAÑOL CENTRAL COLEGIO SALESIANO"
+  ].join("\n");
+  return `mailto:${encodeURIComponent(recipient)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
 
 function MovementHistory() {
@@ -4553,6 +4588,7 @@ function TeacherWorkspace({ currentUser, onLogout }) {
   const unreadTeacherMessagesCount = myMessages.filter((msg) => msg.from === "pañol" && !msg.teacherRead).length;
   const pendingReturnLoans = getTeacherPendingReturnLoans(state.loans || [], teacher);
   const pendingReturnItemsCount = pendingReturnLoans.reduce((total, loan) => total + loan.returnableItems.reduce((sum, item) => sum + Number(item.qty || 1), 0), 0);
+  const pendingReturnsMailto = buildPendingReturnsMailto(teacher, pendingReturnLoans);
   const pendingRequests = myRequests.filter((request) => request.status === "pendiente");
   const readyRequests = myRequests.filter((request) => ["preparada", "entregada"].includes(request.status));
   const recentRequests = [...myRequests].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).slice(0, 4);
@@ -4752,6 +4788,7 @@ function TeacherWorkspace({ currentUser, onLogout }) {
                 ))}
               </div>
               <div className="flex flex-wrap justify-end gap-2">
+                <Button variant="secondary" disabled={!teacher.email} onClick={() => { window.location.href = pendingReturnsMailto; }}><FileCheck size={16} />Generar correo</Button>
                 <Button variant="secondary" onClick={() => { setReturnReminderOpen(false); setChatOpen(true); }}><MessageSquare size={16} />Consultar al pañol</Button>
                 <Button onClick={() => setReturnReminderOpen(false)}><Check size={16} />Entendido</Button>
               </div>
