@@ -2506,7 +2506,20 @@ function ReturnForm({ focusLoanId = "" }) {
 }
 
 function ReceiptModal({ loan, onClose }) {
-  const mailto = buildReceiptMailto(loan);
+  const { notify } = useApp();
+  const [sendingEmail, setSendingEmail] = useState(false);
+  const sendReceiptEmail = async () => {
+    if (!loan.requesterEmail) return notify("El solicitante no tiene correo registrado", "error");
+    setSendingEmail(true);
+    try {
+      await sendEmailViaSupabase(buildReceiptEmailPayload(loan));
+      notify("Comprobante enviado por correo");
+    } catch (error) {
+      notify(`No se pudo enviar el comprobante: ${error.message || error}`, "error");
+    } finally {
+      setSendingEmail(false);
+    }
+  };
   return (
     <Modal title="Comprobante de préstamo" onClose={onClose}>
       <div className="grid gap-4">
@@ -2539,7 +2552,7 @@ function ReceiptModal({ loan, onClose }) {
         </div>
         <div className="flex justify-end gap-2 print:hidden">
           <Button variant="secondary" onClick={onClose}>Cerrar</Button>
-          <Button variant="secondary" disabled={!loan.requesterEmail} onClick={() => { window.location.href = mailto; }}><FileCheck size={16} />Enviar por correo</Button>
+          <Button variant="secondary" disabled={!loan.requesterEmail || sendingEmail} onClick={sendReceiptEmail}><FileCheck size={16} />{sendingEmail ? "Enviando..." : "Enviar por correo"}</Button>
           <Button onClick={() => window.print()}><Printer size={16} />Imprimir</Button>
         </div>
       </div>
@@ -2547,7 +2560,7 @@ function ReceiptModal({ loan, onClose }) {
   );
 }
 
-function buildReceiptMailto(loan) {
+function buildReceiptEmailPayload(loan) {
   const subject = `Comprobante de préstamo - Pañol Central`;
   const body = [
     "PAÑOL CENTRAL COLEGIO SALESIANO",
@@ -2568,7 +2581,11 @@ function buildReceiptMailto(loan) {
     "",
     "Este comprobante fue generado por el sistema de Pañol Central."
   ].join("\n");
-  return `mailto:${encodeURIComponent(loan.requesterEmail || "")}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  return {
+    to: loan.requesterEmail || "",
+    subject,
+    text: body
+  };
 }
 
 function buildPendingReturnsMailto(teacher, pendingLoans = []) {
