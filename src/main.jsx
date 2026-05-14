@@ -110,6 +110,17 @@ const nextFolio = (items, prefix, date = today()) => {
   }, 0);
   return `${marker}${String(max + 1).padStart(4, "0")}`;
 };
+const nextFolios = (items, prefix, count = 1, date = today()) => {
+  const year = folioYear(date);
+  const marker = `${prefix}-${year}-`;
+  const max = (items || []).reduce((highest, item) => {
+    const folio = String(item.folio || "");
+    if (!folio.startsWith(marker)) return highest;
+    const number = Number(folio.slice(marker.length));
+    return Number.isFinite(number) ? Math.max(highest, number) : highest;
+  }, 0);
+  return Array.from({ length: count }, (_, index) => `${marker}${String(max + index + 1).padStart(4, "0")}`);
+};
 const displayFolio = (item, prefix) => item?.folio || `${prefix}-${folioYear(item?.createdAt)}-${String(item?.id || "0000").slice(-4).toUpperCase()}`;
 const addDays = (n) => {
   const date = new Date();
@@ -2048,8 +2059,8 @@ function PersonProfileModal({ person, type, onClose }) {
     if (!person.email || !pendingReturnLoans.length) return;
     setSendingPendingEmail(true);
     try {
-      await sendEmailViaSupabase(buildPendingReturnsEmailPayload(person, pendingReturnLoans));
-      notify("Correo de pendientes enviado al profesor");
+      const result = await sendEmailWithFallback(buildPendingReturnsEmailPayload(person, pendingReturnLoans));
+      notify(result.mode === "mailto" ? "Resend esta limitado. Se abrio Outlook con el recordatorio listo para enviar." : "Correo de pendientes enviado al profesor");
     } catch (error) {
       notify(`No se pudo enviar el correo: ${error.message || error}`, "error");
     } finally {
@@ -2155,6 +2166,7 @@ function LoanForm() {
   const availableItems = [...state.materials.map((m) => ({ ...m, type: "material" })), ...state.tools.filter((t) => t.status === "disponible").map((t) => ({ ...t, type: "tool", stock: 1, unit: "un" }))];
   const [requesterQuery, setRequesterQuery] = useState("");
   const [selectedRequester, setSelectedRequester] = useState(null);
+  const [batchRequesters, setBatchRequesters] = useState([]);
   const [teacherQuery, setTeacherQuery] = useState("");
   const [selectedResponsibleTeacher, setSelectedResponsibleTeacher] = useState(null);
   const [itemQuery, setItemQuery] = useState("");
@@ -2169,6 +2181,7 @@ function LoanForm() {
   useEffect(() => {
     setRequesterQuery("");
     setSelectedRequester(null);
+    setBatchRequesters([]);
     setTeacherQuery("");
     setSelectedResponsibleTeacher(null);
   }, [requesterType]);
@@ -2184,6 +2197,23 @@ function LoanForm() {
   const chosenRequester = selectedRequester || (requesterQuery ? filteredPeople[0] : null);
   const pendingNotice = chosenRequester ? getPendingLoanNotice(state.loans, requesterType, chosenRequester.id) : "";
   const blockReason = chosenRequester ? getBlockReason(state.loans, requesterType, chosenRequester.id) : "";
+  const borrowerCount = requesterType === "student" && batchRequesters.length > 0 ? batchRequesters.length : 1;
+  const addBatchRequester = () => {
+    if (requesterType !== "student" || !chosenRequester) return;
+    if (batchRequesters.some((person) => person.id === chosenRequester.id)) {
+      notify("Ese alumno ya esta agregado al lote");
+      return;
+    }
+    const reason = getBlockReason(state.loans, "student", chosenRequester.id);
+    if (reason) {
+      notify(reason, "error");
+      return;
+    }
+    setBatchRequesters([...batchRequesters, chosenRequester]);
+    setRequesterQuery("");
+    setSelectedRequester(null);
+  };
+  const removeBatchRequester = (id) => setBatchRequesters(batchRequesters.filter((person) => person.id !== id));
   const addItem = () => {
     const item = selectedItem || filteredItems[0];
     if (!item) return;
@@ -2204,8 +2234,30 @@ function LoanForm() {
     const responsibleTeacher = requesterType === "student" ? (selectedResponsibleTeacher || (teacherQuery ? filteredTeachers[0] : null)) : null;
     return { requesterType, requesterId: person.id, requesterName: person.name, requesterEmail: person.email || "", responsibleTeacherId: responsibleTeacher?.id || "", responsibleTeacherName: responsibleTeacher?.name || "", responsibleTeacherEmail: responsibleTeacher?.email || "", expectedReturn, notes, items: items.map((item) => ({ ...item })), operatorName: state.settings.operatorName };
   };
+  const buildBatchLoanDraft = () => {
+    const person = selectedRequester || filteredPeople[0];
+    const requesters = requesterType === "student" && batchRequesters.length > 0 ? batchRequesters : (person ? [person] : []);
+    if (!requesters.length || items.length === 0) return notify("Selecciona solicitante e items", "error");
+    const blockedRequester = requesterType === "student" ? requesters.find((item) => getBlockReason(state.loans, "student", item.id)) : null;
+    if (blockedRequester) return notify(`${blockedRequester.name}: ${getBlockReason(state.loans, "student", blockedRequester.id)}`, "error");
+    const reason = requesterType !== "student" && person ? getBlockReason(state.loans, requesterType, person.id) : "";
+    if (reason) return notify(reason, "error");
+    const toolInBatch = requesters.length > 1 && items.find((item) => item.type === "tool");
+    if (toolInBatch) return notify("Las herramientas unicas deben prestarse de forma individual. El lote esta pensado para materiales repetidos.", "error");
+    const stockIssue = items.find((item) => {
+      if (item.type !== "material") return false;
+      const material = state.materials.find((materialItem) => materialItem.id === item.id);
+      return Number(material?.stock || 0) < Number(item.qty || 1) * requesters.length;
+    });
+    if (stockIssue) return notify(`Stock insuficiente para ${stockIssue.name}. Necesitas ${Number(stockIssue.qty || 1) * requesters.length} unidades para ${requesters.length} solicitud(es).`, "error");
+    const teacherNotice = requesterType === "teacher" && person ? getPendingLoanNotice(state.loans, requesterType, person.id) : "";
+    if (teacherNotice) notify(`Profesor con pendientes: ${teacherNotice}`);
+    const responsibleTeacher = requesterType === "student" ? (selectedResponsibleTeacher || (teacherQuery ? filteredTeachers[0] : null)) : null;
+    const primary = requesters[0];
+    return { requesterType, requesterId: primary.id, requesterName: primary.name, requesterEmail: primary.email || "", requesters: requesters.map((item) => ({ id: item.id, name: item.name, email: item.email || "", rut: item.rut || "", course: item.course || "" })), responsibleTeacherId: responsibleTeacher?.id || "", responsibleTeacherName: responsibleTeacher?.name || "", responsibleTeacherEmail: responsibleTeacher?.email || "", expectedReturn, notes, items: items.map((item) => ({ ...item })), operatorName: state.settings.operatorName };
+  };
   const save = () => {
-    const draft = buildLoanDraft();
+    const draft = buildBatchLoanDraft();
     if (draft) setPendingLoan(draft);
   };
   const confirmLoan = (draft) => {
@@ -2240,6 +2292,50 @@ function LoanForm() {
     setTeacherQuery("");
     setSelectedResponsibleTeacher(null);
   };
+  const confirmBatchLoan = (draft) => {
+    const borrowers = draft.requesterType === "student" && draft.requesters?.length ? draft.requesters : [{ id: draft.requesterId, name: draft.requesterName, email: draft.requesterEmail }];
+    const folios = nextFolios(state.loans, "PRE", borrowers.length);
+    const batchLoanId = borrowers.length > 1 ? uid("lote") : "";
+    const createdLoans = borrowers.map((person, index) => ({
+      ...draft,
+      id: uid("pre"),
+      folio: folios[index],
+      requesterId: person.id,
+      requesterName: person.name,
+      requesterEmail: person.email || "",
+      batchLoanId,
+      batchCount: borrowers.length
+    }));
+    createdLoans.forEach((loan) => dispatch({ type: "CREATE_LOAN", loan }));
+    if (draft.responsibleTeacherId) {
+      const itemLines = draft.items.map((item) => `- ${item.name} | Codigo: ${item.code || "s/c"} | Cantidad: ${item.qty} | ${item.nonReturnable ? "No retorna" : "Debe volver"}`).join("\n");
+      const borrowerLines = createdLoans.map((loan) => `- ${loan.folio}: ${loan.requesterName}`).join("\n");
+      dispatch({
+        type: "SEND_MESSAGE",
+        message: {
+          teacherId: draft.responsibleTeacherId,
+          teacherName: draft.responsibleTeacherName,
+          loanId: createdLoans[0]?.id,
+          from: "panol",
+          to: "docente",
+          teacherRead: false,
+          adminRead: true,
+          body: `${createdLoans.length > 1 ? "Prestamos individuales registrados para alumnos:" : "Prestamo registrado para alumno:"}\n${borrowerLines}\nFecha entrega: ${formatDate(today())}\nFecha devolucion esperada: ${formatDate(draft.expectedReturn)}\n\nItems por alumno:\n${itemLines}\n\nAl finalizar la clase, por favor enviar al alumno al panol con los materiales que deben volver.${draft.notes ? `\n\nObservaciones: ${draft.notes}` : ""}`,
+          read: false
+        }
+      });
+    }
+    setReceipt(createdLoans.map((loan) => ({ ...loan, createdAt: today() })));
+    notify(draft.responsibleTeacherId ? `${createdLoans.length} prestamo(s) individual(es) confirmado(s) y aviso enviado al profesor` : `${createdLoans.length} prestamo(s) individual(es) confirmado(s)`);
+    setPendingLoan(null);
+    setItems([]);
+    setNotes("");
+    setRequesterQuery("");
+    setSelectedRequester(null);
+    setBatchRequesters([]);
+    setTeacherQuery("");
+    setSelectedResponsibleTeacher(null);
+  };
   return (
     <div className="panel grid gap-5">
       <div className="grid gap-4 md:grid-cols-4">
@@ -2266,9 +2362,35 @@ function LoanForm() {
             </div>
           )}
         </div>
+        {requesterType === "student" && (
+          <div className="flex items-end">
+            <Button variant="secondary" disabled={!chosenRequester} onClick={addBatchRequester}>
+              <Plus size={16} />Agregar alumno
+            </Button>
+          </div>
+        )}
         <Field label="Fecha esperada"><input className={inputClass} type="date" value={expectedReturn} onChange={(e) => setExpectedReturn(e.target.value)} /></Field>
         <Field label="Observaciones"><input className={inputClass} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Uso, taller o módulo" /></Field>
       </div>
+      {requesterType === "student" && batchRequesters.length > 0 && (
+        <div className="rounded-lg border border-salesian-blue/25 bg-salesian-blue/5 p-4">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-sm font-bold text-slate-950 dark:text-white">Prestamo multiple de alumnos</p>
+              <p className="text-xs text-slate-600 dark:text-slate-300">Se creara un folio individual para cada alumno con los mismos items y cantidades.</p>
+            </div>
+            <Badge tone="blue">{borrowerCount} solicitud(es)</Badge>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {batchRequesters.map((person) => (
+              <span key={person.id} className="inline-flex items-center gap-2 rounded-full border border-salesian-blue/30 bg-white px-3 py-1 text-sm font-semibold text-salesian-blue shadow-sm dark:bg-steel-850 dark:text-white">
+                {person.name}
+                <button type="button" className="text-slate-500 hover:text-red-600" onClick={() => removeBatchRequester(person.id)} title="Quitar alumno"><X size={14} /></button>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
       {requesterType === "student" && (
         <div className="relative max-w-3xl rounded-lg border border-sky-500/30 bg-sky-500/10 p-4">
           <Field label="Profesor responsable de la clase (opcional)">
@@ -2330,8 +2452,9 @@ function LoanForm() {
       )}
       <DataTable rows={items} columns={[["name", "Ítem"], ["code", "Código"], ["type", "Tipo"], ["qty", "Cantidad"], ["returnMode", "Retorno"]]} actions={(row) => <Button variant="ghost" className="px-2 text-red-300" onClick={() => setItems(items.filter((i) => i !== row))}><X size={16} /></Button>} compact />
       <div className="flex justify-end"><Button disabled={Boolean(blockReason)} onClick={save}><ShieldCheck size={16} />Registrar préstamo</Button></div>
-      {pendingLoan && <LoanReviewModal loan={pendingLoan} onClose={() => setPendingLoan(null)} onConfirm={confirmLoan} />}
-      {receipt && <ReceiptModal loan={receipt} onClose={() => setReceipt(null)} />}
+      {pendingLoan && <LoanReviewModal loan={pendingLoan} onClose={() => setPendingLoan(null)} onConfirm={confirmBatchLoan} />}
+      {Array.isArray(receipt) && receipt.length > 0 && <ReceiptModal loan={receipt[0]} onClose={() => setReceipt(receipt.slice(1))} />}
+      {receipt && !Array.isArray(receipt) && <ReceiptModal loan={receipt} onClose={() => setReceipt(null)} />}
     </div>
   );
 }
@@ -2370,6 +2493,16 @@ function LoanReviewModal({ loan, onClose, onConfirm }) {
         <div className="rounded-md border border-safety-500/40 bg-safety-500/10 px-4 py-3 text-sm text-slate-100">
           Revisa y corrige estos datos antes de generar el préstamo. El stock y el historial se actualizan recién al confirmar.
         </div>
+        {draft.requesters?.length > 1 && (
+          <div className="rounded-md border border-salesian-blue/30 bg-salesian-blue/5 p-4">
+            <p className="mb-2 text-sm font-bold text-slate-950 dark:text-white">Se generaran {draft.requesters.length} comprobantes individuales</p>
+            <div className="flex flex-wrap gap-2">
+              {draft.requesters.map((person) => (
+                <span key={person.id} className="rounded-full border border-salesian-blue/25 bg-white px-3 py-1 text-xs font-semibold text-salesian-blue dark:bg-steel-850 dark:text-white">{person.name}</span>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="grid gap-4 md:grid-cols-2">
           <Field label="Solicitante"><input className={inputClass} value={draft.requesterName} onChange={(event) => setDraft({ ...draft, requesterName: event.target.value })} /></Field>
           <Field label="Email solicitante"><input className={inputClass} value={draft.requesterEmail || ""} onChange={(event) => setDraft({ ...draft, requesterEmail: event.target.value })} /></Field>
@@ -2512,8 +2645,8 @@ function ReceiptModal({ loan, onClose }) {
     if (!loan.requesterEmail) return notify("El solicitante no tiene correo registrado", "error");
     setSendingEmail(true);
     try {
-      await sendEmailViaSupabase(buildReceiptEmailPayload(loan));
-      notify("Comprobante enviado por correo");
+      const result = await sendEmailWithFallback(buildReceiptEmailPayload(loan));
+      notify(result.mode === "mailto" ? "Resend esta limitado. Se abrio Outlook con el comprobante listo para enviar." : "Comprobante enviado por correo");
     } catch (error) {
       notify(`No se pudo enviar el comprobante: ${error.message || error}`, "error");
     } finally {
@@ -2656,7 +2789,7 @@ function emailHtmlEscape(value) {
 
 function buildPendingReturnsMailto(teacher, pendingLoans = []) {
   const payload = buildPendingReturnsEmailPayload(teacher, pendingLoans);
-  return `mailto:${encodeURIComponent(payload.to || "")}?subject=${encodeURIComponent(payload.subject)}&body=${encodeURIComponent(payload.text)}`;
+  return buildMailtoFromPayload(payload);
 }
 
 function buildPendingReturnsEmailPayload(teacher, pendingLoans = []) {
@@ -2690,6 +2823,24 @@ async function sendEmailViaSupabase(payload) {
   if (error) throw new Error(error.message || "No se pudo llamar a la función de correo.");
   if (!data?.ok) throw new Error(data?.detail?.message || data?.detail || data?.error || "No se pudo enviar el correo.");
   return data;
+}
+
+function buildMailtoFromPayload(payload) {
+  const to = Array.isArray(payload?.to) ? payload.to.join(",") : payload?.to || "";
+  const subject = payload?.subject || "Correo Panol Central";
+  const body = payload?.text || "";
+  return `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
+async function sendEmailWithFallback(payload) {
+  try {
+    await sendEmailViaSupabase(payload);
+    return { mode: "resend" };
+  } catch (error) {
+    if (!payload?.to || typeof window === "undefined") throw error;
+    window.location.href = buildMailtoFromPayload(payload);
+    return { mode: "mailto", error };
+  }
 }
 
 function MovementHistory() {
@@ -4732,8 +4883,8 @@ function TeacherWorkspace({ currentUser, onLogout }) {
     if (!teacher.email || !pendingReturnLoans.length) return;
     setSendingPendingEmail(true);
     try {
-      await sendEmailViaSupabase(buildPendingReturnsEmailPayload(teacher, pendingReturnLoans));
-      notify("Correo de pendientes enviado al profesor");
+      const result = await sendEmailWithFallback(buildPendingReturnsEmailPayload(teacher, pendingReturnLoans));
+      notify(result.mode === "mailto" ? "Resend esta limitado. Se abrio Outlook con el recordatorio listo para enviar." : "Correo de pendientes enviado al profesor");
     } catch (error) {
       notify(`No se pudo enviar el correo: ${error.message || error}`, "error");
     } finally {
