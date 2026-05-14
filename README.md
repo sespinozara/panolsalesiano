@@ -76,3 +76,16 @@ npx supabase functions deploy panol-assistant
 ```
 
 Usa los mismos secretos `OPENAI_API_KEY` y `OPENAI_MODEL` que configuraste para `teacher-suggestions`.
+
+## Correos automáticos con Resend
+
+Para que los recordatorios de devoluciones pendientes se envíen sin abrir Outlook, despliega la función y configura los secretos en Supabase:
+
+```bash
+npx supabase functions deploy send-email --project-ref TU_PROJECT_REF
+npx supabase secrets set RESEND_API_KEY=tu_clave_resend --project-ref TU_PROJECT_REF
+npx supabase secrets set RESEND_FROM="Pañol Central <correo_verificado@tu-dominio.cl>" --project-ref TU_PROJECT_REF
+npx supabase secrets set RESEND_REPLY_TO=panol@salesianoconcepcion.cl --project-ref TU_PROJECT_REF
+```
+
+`RESEND_FROM` debe usar un remitente verificado en Resend para uso real.

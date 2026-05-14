@@ -2036,14 +2036,26 @@ function CrudTable({ collection, config }) {
 }
 
 function PersonProfileModal({ person, type, onClose }) {
-  const { state } = useApp();
+  const { state, notify } = useApp();
+  const [sendingPendingEmail, setSendingPendingEmail] = useState(false);
   const typeLabel = type === "student" ? "Alumno" : "Profesor";
   const loans = state.loans.filter((loan) => loan.requesterId === person.id || normalizeHeader(loan.requesterName) === normalizeHeader(person.name));
   const activeLoans = loans.filter((loan) => loan.status === "activo");
   const requests = type === "teacher" ? (state.requests || []).filter((request) => request.requesterId === person.id || normalizeHeader(request.requesterName) === normalizeHeader(person.name)) : [];
   const messages = type === "teacher" ? (state.messages || []).filter((msg) => msg.teacherId === person.id) : [];
   const pendingReturnLoans = type === "teacher" ? getTeacherPendingReturnLoans(state.loans || [], person) : [];
-  const pendingReturnsMailto = type === "teacher" ? buildPendingReturnsMailto(person, pendingReturnLoans) : "";
+  const sendPendingEmail = async () => {
+    if (!person.email || !pendingReturnLoans.length) return;
+    setSendingPendingEmail(true);
+    try {
+      await sendEmailViaSupabase(buildPendingReturnsEmailPayload(person, pendingReturnLoans));
+      notify("Correo de pendientes enviado al profesor");
+    } catch (error) {
+      notify(`No se pudo enviar el correo: ${error.message || error}`, "error");
+    } finally {
+      setSendingPendingEmail(false);
+    }
+  };
   const pendingNotice = getPendingLoanNotice(state.loans, type, person.id);
   const blockReason = getBlockReason(state.loans, type, person.id);
   return (
@@ -2063,7 +2075,7 @@ function PersonProfileModal({ person, type, onClose }) {
               <p className="font-bold text-white">Recordatorio de devoluciones pendientes</p>
               <p className="text-sm text-slate-400">{pendingReturnLoans.length ? `${pendingReturnLoans.length} prÃ©stamo(s) con elementos pendientes para informar por correo.` : "Este profesor no tiene elementos pendientes de devoluciÃ³n."}</p>
             </div>
-            <Button variant="secondary" disabled={!person.email || pendingReturnLoans.length === 0} onClick={() => { window.location.href = pendingReturnsMailto; }}><FileCheck size={16} />Generar correo</Button>
+            <Button variant="secondary" disabled={!person.email || pendingReturnLoans.length === 0 || sendingPendingEmail} onClick={sendPendingEmail}><FileCheck size={16} />{sendingPendingEmail ? "Enviando..." : "Enviar correo"}</Button>
           </div>
         )}
         <div className="grid gap-4 xl:grid-cols-2">
@@ -2560,10 +2572,16 @@ function buildReceiptMailto(loan) {
 }
 
 function buildPendingReturnsMailto(teacher, pendingLoans = []) {
-  const recipient = teacher?.email || "";
+  const payload = buildPendingReturnsEmailPayload(teacher, pendingLoans);
+  return `mailto:${encodeURIComponent(payload.to || "")}?subject=${encodeURIComponent(payload.subject)}&body=${encodeURIComponent(payload.text)}`;
+}
+
+function buildPendingReturnsEmailPayload(teacher, pendingLoans = []) {
   const totalItems = pendingLoans.reduce((total, loan) => total + loan.returnableItems.reduce((sum, item) => sum + Number(item.qty || 1), 0), 0);
-  const subject = "Recordatorio de materiales pendientes - Pañol Central";
-  const body = [
+  return {
+    to: teacher?.email || "",
+    subject: "Recordatorio de materiales pendientes - Pañol Central",
+    text: [
     `Estimado/a ${teacher?.name || "docente"},`,
     "",
     "Junto con saludar, recordamos bajar a pañol lo antes posible los siguientes materiales/herramientas que se encuentran pendientes de devolución:",
@@ -2579,8 +2597,16 @@ function buildPendingReturnsMailto(teacher, pendingLoans = []) {
     "",
     "Saludos cordiales,",
     "PAÑOL CENTRAL COLEGIO SALESIANO"
-  ].join("\n");
-  return `mailto:${encodeURIComponent(recipient)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    ].join("\n")
+  };
+}
+
+async function sendEmailViaSupabase(payload) {
+  if (!supabase) throw new Error("Supabase no está configurado para enviar correos.");
+  const { data, error } = await supabase.functions.invoke("send-email", { body: payload });
+  if (error) throw new Error(error.message || "No se pudo llamar a la función de correo.");
+  if (!data?.ok) throw new Error(data?.detail?.message || data?.detail || data?.error || "No se pudo enviar el correo.");
+  return data;
 }
 
 function MovementHistory() {
@@ -4575,6 +4601,7 @@ function TeacherWorkspace({ currentUser, onLogout }) {
   const [lessonLoading, setLessonLoading] = useState(false);
   const [lessonSource, setLessonSource] = useState("local");
   const [returnReminderOpen, setReturnReminderOpen] = useState(true);
+  const [sendingPendingEmail, setSendingPendingEmail] = useState(false);
   const inventory = [
     ...state.materials.map((item) => ({ ...item, type: "material", statusText: `${item.stock} ${item.unit}` })),
     ...state.tools.map((item) => ({ ...item, type: "tool", category: "Herramientas", stock: item.status === "disponible" ? 1 : 0, statusText: item.status }))
@@ -4588,7 +4615,6 @@ function TeacherWorkspace({ currentUser, onLogout }) {
   const unreadTeacherMessagesCount = myMessages.filter((msg) => msg.from === "pañol" && !msg.teacherRead).length;
   const pendingReturnLoans = getTeacherPendingReturnLoans(state.loans || [], teacher);
   const pendingReturnItemsCount = pendingReturnLoans.reduce((total, loan) => total + loan.returnableItems.reduce((sum, item) => sum + Number(item.qty || 1), 0), 0);
-  const pendingReturnsMailto = buildPendingReturnsMailto(teacher, pendingReturnLoans);
   const pendingRequests = myRequests.filter((request) => request.status === "pendiente");
   const readyRequests = myRequests.filter((request) => ["preparada", "entregada"].includes(request.status));
   const recentRequests = [...myRequests].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).slice(0, 4);
@@ -4619,6 +4645,18 @@ function TeacherWorkspace({ currentUser, onLogout }) {
         }
       }))
   ];
+  const sendPendingEmail = async () => {
+    if (!teacher.email || !pendingReturnLoans.length) return;
+    setSendingPendingEmail(true);
+    try {
+      await sendEmailViaSupabase(buildPendingReturnsEmailPayload(teacher, pendingReturnLoans));
+      notify("Correo de pendientes enviado al profesor");
+    } catch (error) {
+      notify(`No se pudo enviar el correo: ${error.message || error}`, "error");
+    } finally {
+      setSendingPendingEmail(false);
+    }
+  };
   const addToCart = (item) => {
     const existing = cart.find((cartItem) => cartItem.id === item.id && cartItem.type === item.type);
     if (existing) setCart(cart.map((cartItem) => cartItem === existing ? { ...cartItem, qty: Number(cartItem.qty) + 1 } : cartItem));
@@ -4788,7 +4826,7 @@ function TeacherWorkspace({ currentUser, onLogout }) {
                 ))}
               </div>
               <div className="flex flex-wrap justify-end gap-2">
-                <Button variant="secondary" disabled={!teacher.email} onClick={() => { window.location.href = pendingReturnsMailto; }}><FileCheck size={16} />Generar correo</Button>
+                <Button variant="secondary" disabled={!teacher.email || sendingPendingEmail} onClick={sendPendingEmail}><FileCheck size={16} />{sendingPendingEmail ? "Enviando..." : "Enviar correo"}</Button>
                 <Button variant="secondary" onClick={() => { setReturnReminderOpen(false); setChatOpen(true); }}><MessageSquare size={16} />Consultar al pañol</Button>
                 <Button onClick={() => setReturnReminderOpen(false)}><Check size={16} />Entendido</Button>
               </div>
