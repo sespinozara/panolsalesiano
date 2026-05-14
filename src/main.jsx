@@ -2562,6 +2562,62 @@ function ReceiptModal({ loan, onClose }) {
 
 function buildReceiptEmailPayload(loan) {
   const subject = `Comprobante de préstamo - Pañol Central`;
+  const itemsRows = loan.items.map((item) => `
+    <tr>
+      <td style="padding:12px 14px;border-bottom:1px solid #d7dfed;font-weight:700;color:#0f172a;">${emailHtmlEscape(item.name)}</td>
+      <td style="padding:12px 14px;border-bottom:1px solid #d7dfed;text-align:center;color:#0f172a;">${emailHtmlEscape(item.qty)}</td>
+      <td style="padding:12px 14px;border-bottom:1px solid #d7dfed;color:${item.nonReturnable ? "#b45309" : "#166534"};font-weight:700;">${item.nonReturnable ? "No retorna" : "Debe ser devuelto"}</td>
+    </tr>
+  `).join("");
+  const html = `
+    <div style="margin:0;padding:24px;background:#f3f6fb;font-family:Arial,Helvetica,sans-serif;color:#0f172a;">
+      <div style="max-width:720px;margin:0 auto;background:#ffffff;border:1px solid #d7dfed;border-radius:14px;overflow:hidden;">
+        <div style="background:#172554;color:#ffffff;padding:24px 28px;border-bottom:5px solid #facc15;">
+          <div style="font-size:13px;letter-spacing:1.6px;text-transform:uppercase;color:#fde68a;font-weight:700;">Pañol Central Colegio Salesiano</div>
+          <h1 style="margin:8px 0 0;font-size:24px;line-height:1.2;">Comprobante de préstamo</h1>
+          <p style="margin:8px 0 0;color:#dbeafe;">Folio ${emailHtmlEscape(displayFolio(loan, "PRE"))}</p>
+        </div>
+
+        <div style="padding:24px 28px;">
+          <p style="margin:0 0 18px;font-size:16px;">Estimado/a <strong>${emailHtmlEscape(loan.requesterName)}</strong>, se registra la entrega de los siguientes materiales/herramientas:</p>
+
+          <table role="presentation" style="width:100%;border-collapse:collapse;margin:0 0 20px;background:#f8fafc;border:1px solid #d7dfed;border-radius:10px;overflow:hidden;">
+            <tr>
+              <td style="padding:12px 14px;width:50%;border-bottom:1px solid #d7dfed;"><strong>Fecha entrega</strong><br>${emailHtmlEscape(formatDate(loan.createdAt))}</td>
+              <td style="padding:12px 14px;border-bottom:1px solid #d7dfed;"><strong>Fecha devolución esperada</strong><br>${emailHtmlEscape(formatDate(loan.expectedReturn))}</td>
+            </tr>
+            <tr>
+              <td style="padding:12px 14px;"><strong>Responsable entrega</strong><br>${emailHtmlEscape(loan.operatorName || "Encargado de pañol")}</td>
+              <td style="padding:12px 14px;"><strong>Observaciones</strong><br>${emailHtmlEscape(loan.notes || "Sin observaciones")}</td>
+            </tr>
+          </table>
+
+          <h2 style="font-size:18px;margin:0 0 10px;">Detalle de elementos</h2>
+          <table role="presentation" style="width:100%;border-collapse:collapse;border:1px solid #d7dfed;border-radius:10px;overflow:hidden;">
+            <thead>
+              <tr style="background:#e8eef8;color:#172554;text-transform:uppercase;font-size:12px;letter-spacing:.5px;">
+                <th align="left" style="padding:12px 14px;">Elemento</th>
+                <th align="center" style="padding:12px 14px;">Cantidad</th>
+                <th align="left" style="padding:12px 14px;">Compromiso</th>
+              </tr>
+            </thead>
+            <tbody>${itemsRows}</tbody>
+          </table>
+
+          ${loan.responsibleTeacherName ? `<p style="margin:18px 0 0;color:#334155;"><strong>Profesor responsable:</strong> ${emailHtmlEscape(loan.responsibleTeacherName)}</p>` : ""}
+          ${loan.requestFolio ? `<p style="margin:8px 0 0;color:#334155;"><strong>Solicitud origen:</strong> ${emailHtmlEscape(loan.requestFolio)}</p>` : ""}
+
+          <div style="margin-top:22px;padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;color:#78350f;">
+            Por favor, devolver los elementos marcados como <strong>Debe ser devuelto</strong> en la fecha indicada.
+          </div>
+        </div>
+
+        <div style="padding:16px 28px;background:#f8fafc;border-top:1px solid #d7dfed;color:#64748b;font-size:13px;">
+          Este comprobante fue generado automáticamente por el sistema de Pañol Central.
+        </div>
+      </div>
+    </div>
+  `;
   const body = [
     "PAÑOL CENTRAL COLEGIO SALESIANO",
     "",
@@ -2575,7 +2631,7 @@ function buildReceiptEmailPayload(loan) {
     `Responsable entrega: ${loan.operatorName}`,
     "",
     "Ítems entregados:",
-    ...loan.items.map((item) => `- ${item.name} | Código: ${item.code || "s/c"} | Cantidad: ${item.qty} | ${item.nonReturnable ? "No retorna al inventario" : "Debe ser devuelto"}`),
+    ...loan.items.map((item) => `- ${item.name} | Cantidad: ${item.qty} | ${item.nonReturnable ? "No retorna al inventario" : "Debe ser devuelto"}`),
     "",
     `Observaciones: ${loan.notes || "Sin observaciones"}`,
     "",
@@ -2584,8 +2640,18 @@ function buildReceiptEmailPayload(loan) {
   return {
     to: loan.requesterEmail || "",
     subject,
-    text: body
+    text: body,
+    html
   };
+}
+
+function emailHtmlEscape(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
 function buildPendingReturnsMailto(teacher, pendingLoans = []) {
