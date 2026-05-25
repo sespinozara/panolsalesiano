@@ -3984,14 +3984,22 @@ function Invoices() {
       </div>
       <div className="panel">
         <h2 className="section-title"><FileText size={18} />Historial de facturas</h2>
-        <DataTable
-          rows={state.invoices}
-          columns={[["date", "Fecha"], ["provider", "Proveedor"], ["invoiceNumber", "N° factura"], ["itemsCount", "Ítems"], ["documentName", "Documento"]]}
-          compact
-          actions={(invoice) => (
-            <Button variant="ghost" className="px-2" onClick={() => startInvoiceEdit(invoice)} title="Editar factura"><Edit3 size={16} /></Button>
-          )}
-        />
+        <div className="grid gap-2">
+          {state.invoices.length === 0 && <div className="rounded-lg border border-steel-700 px-4 py-8 text-center text-sm text-slate-400">Sin registros para mostrar</div>}
+          {state.invoices.map((invoice) => (
+            <div key={invoice.id} className="grid gap-3 rounded-lg border border-steel-700 bg-steel-900 p-3 text-sm sm:grid-cols-[1fr_auto] sm:items-center">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <strong className="text-slate-100">{invoice.invoiceNumber ? `Factura ${invoice.invoiceNumber}` : "Factura sin numero"}</strong>
+                  <Badge tone="blue">{invoice.itemsCount || 0} item(s)</Badge>
+                </div>
+                <div className="mt-1 text-slate-700 dark:text-slate-300">{invoice.provider || "Sin proveedor"} · {formatDate(invoice.date)}</div>
+                <div className="mt-1 truncate text-xs text-slate-500 dark:text-slate-400" title={invoice.documentName || ""}>{invoice.documentName || "sin documento"}</div>
+              </div>
+              <Button variant="secondary" className="justify-center px-3" onClick={() => startInvoiceEdit(invoice)} title="Editar factura"><Edit3 size={16} />Editar</Button>
+            </div>
+          ))}
+        </div>
       </div>
       {editingInvoice && (
         <Modal title="Editar factura" onClose={() => setEditingInvoice(null)}>
