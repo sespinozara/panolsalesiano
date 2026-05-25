@@ -340,8 +340,8 @@ seed.loans = [
   }
 ];
 seed.invoices = [
-  { id: uid("fac"), date: addDays(-24), provider: "Suministros Técnicos Norte", itemsCount: 6, documentName: "factura-1832.pdf" },
-  { id: uid("fac"), date: addDays(-10), provider: "Ferretería Industrial Sur", itemsCount: 4, documentName: "factura-2190.jpg" }
+  { id: uid("fac"), date: addDays(-24), provider: "Suministros Técnicos Norte", invoiceNumber: "1832", itemsCount: 6, documentName: "factura-1832.pdf" },
+  { id: uid("fac"), date: addDays(-10), provider: "Ferretería Industrial Sur", invoiceNumber: "2190", itemsCount: 4, documentName: "factura-2190.jpg" }
 ];
 seed.movements = [
   { id: uid("mov"), date: addDays(-1), type: "salida", detail: "Préstamo lentes de seguridad", requesterName: seed.teachers[0].name, status: "activo" },
@@ -696,14 +696,20 @@ function reducer(state, action) {
           materials.unshift({ id: uid("mat"), name: item.name, code, category, stock: Number(item.qty), minStock: 5, unit: "un", location: "Por asignar" });
         }
       });
-      const invoice = { id: uid("fac"), date: today(), provider: action.provider, itemsCount: action.items.length, documentName: action.documentName };
+      const invoice = { id: uid("fac"), date: today(), provider: action.provider, invoiceNumber: action.invoiceNumber || "", itemsCount: action.items.length, documentName: action.documentName };
+      const invoiceDetail = action.invoiceNumber ? `Factura ${action.invoiceNumber} - ${action.provider}` : `Factura ${action.provider}`;
       return {
         ...state,
         materials,
         invoices: [invoice, ...state.invoices],
-        movements: [{ id: uid("mov"), date: today(), type: "entrada", detail: `Factura ${action.provider}`, requesterName: "Proveedor", status: "importado" }, ...state.movements]
+        movements: [{ id: uid("mov"), date: today(), type: "entrada", detail: invoiceDetail, requesterName: "Proveedor", status: "importado" }, ...state.movements]
       };
     }
+    case "UPDATE_INVOICE":
+      return {
+        ...state,
+        invoices: state.invoices.map((invoice) => invoice.id === action.id ? { ...invoice, ...action.patch } : invoice)
+      };
     case "RESET_DATA":
       return createEmptyState();
     default:
@@ -741,6 +747,7 @@ function auditEntryForAction(action, state) {
     CREATE_LOAN: `Prestamo registrado para ${action.loan?.requesterName || "solicitante"}${action.loan?.folio ? ` (${action.loan.folio})` : ""}`,
     RETURN_LOAN: "Devolucion registrada",
     IMPORT_INVOICE: `Factura importada: ${action.provider || ""}`,
+    UPDATE_INVOICE: "Factura actualizada",
     RESET_DATA: "Datos del sistema vaciados"
   };
   return {
@@ -1030,8 +1037,9 @@ function GlobalSearch({ allowedSections = [], onSelect }) {
     }
     if (canSee("invoices")) {
       (state.invoices || []).forEach((invoice) => {
-        const text = `${invoice.provider} ${invoice.documentName} ${invoice.date}`;
-        if (matches(text)) rows.push({ id: `invoice-${invoice.id}`, section: "invoices", type: "Factura", title: invoice.provider || "Factura", meta: `${invoice.documentName || "sin documento"} · ${invoice.itemsCount || 0} item(s)` });
+        const text = `${invoice.provider} ${invoice.invoiceNumber || ""} ${invoice.documentName} ${invoice.date}`;
+        const invoiceLabel = invoice.invoiceNumber ? `Factura ${invoice.invoiceNumber}` : "Factura sin numero";
+        if (matches(text)) rows.push({ id: `invoice-${invoice.id}`, section: "invoices", type: "Factura", title: `${invoiceLabel} · ${invoice.provider || "Sin proveedor"}`, meta: `${invoice.documentName || "sin documento"} · ${invoice.itemsCount || 0} item(s)` });
       });
     }
     return rows.slice(0, 10);
@@ -3787,12 +3795,15 @@ function normalizeHeader(value) {
 function Invoices() {
   const { state, dispatch, notify } = useApp();
   const [provider, setProvider] = useState("");
+  const [invoiceNumber, setInvoiceNumber] = useState("");
   const [document, setDocument] = useState(null);
   const [preview, setPreview] = useState("");
   const emptyInvoiceItem = { name: "", code: "", category: "", qty: 1 };
   const [items, setItems] = useState([emptyInvoiceItem]);
   const [extracting, setExtracting] = useState(false);
   const [extractionNote, setExtractionNote] = useState("");
+  const [editingInvoice, setEditingInvoice] = useState(null);
+  const [invoiceDraft, setInvoiceDraft] = useState({ provider: "", invoiceNumber: "", documentName: "" });
   const materialCategories = Array.from(new Set(state.materials.map((item) => item.category).filter(Boolean))).sort((a, b) => a.localeCompare(b));
   const findMaterialMatch = (item) => {
     const name = normalizeHeader(item.name || "");
@@ -3898,18 +3909,42 @@ function Invoices() {
       .map((item, index) => ({ ...item, code: item.code || previewGeneratedCode(item, index), category: item.category || findMaterialMatch(item)?.category || "Sin clasificar" }))
       .filter((i) => i.name && Number(i.qty) > 0);
     if (!provider || valid.length === 0) return notify("Completa proveedor e ítems", "error");
-    dispatch({ type: "IMPORT_INVOICE", provider, documentName: document?.name || "sin-documento", items: valid });
+    dispatch({ type: "IMPORT_INVOICE", provider, invoiceNumber: invoiceNumber.trim(), documentName: document?.name || "sin-documento", items: valid });
     notify("Factura importada al inventario");
     setProvider("");
+    setInvoiceNumber("");
     setItems([emptyInvoiceItem]);
     setDocument(null);
     setPreview("");
   };
+  const startInvoiceEdit = (invoice) => {
+    setEditingInvoice(invoice);
+    setInvoiceDraft({
+      provider: invoice.provider || "",
+      invoiceNumber: invoice.invoiceNumber || "",
+      documentName: invoice.documentName || ""
+    });
+  };
+  const saveInvoiceEdit = () => {
+    if (!editingInvoice) return;
+    dispatch({
+      type: "UPDATE_INVOICE",
+      id: editingInvoice.id,
+      patch: {
+        provider: invoiceDraft.provider.trim() || "Sin proveedor",
+        invoiceNumber: invoiceDraft.invoiceNumber.trim(),
+        documentName: invoiceDraft.documentName.trim() || "sin-documento"
+      }
+    });
+    notify("Factura actualizada");
+    setEditingInvoice(null);
+  };
   return (
     <div className="grid gap-6 xl:grid-cols-[1.2fr_.8fr]">
       <div className="panel grid gap-5">
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-4 md:grid-cols-3">
           <Field label="Proveedor"><input className={inputClass} value={provider} onChange={(e) => setProvider(e.target.value)} placeholder="Nombre del proveedor" /></Field>
+          <Field label="N° factura"><input className={inputClass} value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} placeholder="Ej: 12345" /></Field>
           <Field label="Subir factura"><input className={inputClass} type="file" accept="image/*,.pdf" onChange={(e) => onFile(e.target.files?.[0])} /></Field>
         </div>
         <div className="rounded-lg border border-dashed border-steel-700 bg-steel-850 p-4">
@@ -3949,8 +3984,28 @@ function Invoices() {
       </div>
       <div className="panel">
         <h2 className="section-title"><FileText size={18} />Historial de facturas</h2>
-        <DataTable rows={state.invoices} columns={[["date", "Fecha"], ["provider", "Proveedor"], ["itemsCount", "Ítems"], ["documentName", "Documento"]]} compact />
+        <DataTable
+          rows={state.invoices}
+          columns={[["date", "Fecha"], ["provider", "Proveedor"], ["invoiceNumber", "N° factura"], ["itemsCount", "Ítems"], ["documentName", "Documento"]]}
+          compact
+          actions={(invoice) => (
+            <Button variant="ghost" className="px-2" onClick={() => startInvoiceEdit(invoice)} title="Editar factura"><Edit3 size={16} /></Button>
+          )}
+        />
       </div>
+      {editingInvoice && (
+        <Modal title="Editar factura" onClose={() => setEditingInvoice(null)}>
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field label="Proveedor"><input className={inputClass} value={invoiceDraft.provider} onChange={(e) => setInvoiceDraft({ ...invoiceDraft, provider: e.target.value })} /></Field>
+            <Field label="N° factura"><input className={inputClass} value={invoiceDraft.invoiceNumber} onChange={(e) => setInvoiceDraft({ ...invoiceDraft, invoiceNumber: e.target.value })} placeholder="Ej: 12345" /></Field>
+            <Field label="Documento asociado"><input className={inputClass} value={invoiceDraft.documentName} onChange={(e) => setInvoiceDraft({ ...invoiceDraft, documentName: e.target.value })} /></Field>
+          </div>
+          <div className="mt-5 flex flex-wrap justify-end gap-2">
+            <Button variant="secondary" onClick={() => setEditingInvoice(null)}><X size={16} />Cancelar</Button>
+            <Button onClick={saveInvoiceEdit}><Save size={16} />Guardar</Button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
