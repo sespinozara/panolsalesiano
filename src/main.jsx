@@ -2514,11 +2514,16 @@ function LoanForm() {
               {filteredPeople.length === 0 && <p className="px-3 py-3 text-sm text-slate-400">Sin resultados</p>}
               {filteredPeople.map((person) => (
                 <button key={person.id} type="button" className="flex w-full items-center justify-between gap-3 border-b border-steel-800 px-3 py-3 text-left hover:bg-steel-800" onClick={() => { setSelectedRequester(person); setRequesterQuery(person.name); }}>
-                  <span>
-                    <span className="block text-sm font-semibold text-white">{person.name}</span>
-                    <span className="block text-xs text-slate-400">{person.rut || "Sin RUT"} · {person.course || person.department || "Sin curso/departamento"} · {person.email || "Sin email"}</span>
+                  <span className="flex min-w-0 items-center gap-3">
+                    {requesterType === "student" && <StudentPhotoAvatar person={person} size="xs" />}
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-semibold text-white">{person.name}</span>
+                      <span className="block truncate text-xs text-slate-400">{person.rut || "Sin RUT"} · {person.course || person.department || "Sin curso/departamento"} · {person.email || "Sin email"}</span>
+                    </span>
                   </span>
-                  <Badge tone={requesterType === "student" ? "blue" : "green"}>{requesterType === "student" ? "Alumno" : "Profesor"}</Badge>
+                  <span className="shrink-0">
+                    <Badge tone={requesterType === "student" ? "blue" : "green"}>{requesterType === "student" ? "Alumno" : "Profesor"}</Badge>
+                  </span>
                 </button>
               ))}
             </div>
