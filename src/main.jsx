@@ -98,6 +98,7 @@ const getAppUsers = (state) => {
 const uid = (prefix) => `${prefix}-${Math.random().toString(36).slice(2, 8)}-${Date.now().toString(36)}`;
 const today = () => new Date().toISOString().slice(0, 10);
 const asArray = (value) => Array.isArray(value) ? value : value ? [value] : [];
+const normalizeRut = (value = "") => String(value).toUpperCase().replace(/[^0-9K]/g, "");
 const folioYear = (date = today()) => String(date || today()).slice(0, 4);
 const nextFolio = (items, prefix, date = today()) => {
   const year = folioYear(date);
@@ -122,6 +123,39 @@ const nextFolios = (items, prefix, count = 1, date = today()) => {
   return Array.from({ length: count }, (_, index) => `${marker}${String(max + index + 1).padStart(4, "0")}`);
 };
 const displayFolio = (item, prefix) => item?.folio || `${prefix}-${folioYear(item?.createdAt)}-${String(item?.id || "0000").slice(-4).toUpperCase()}`;
+const rutFromPhotoFileName = (name = "") => {
+  const compact = normalizeRut(String(name).replace(/\.[^.]+$/, ""));
+  const match = compact.match(/\d{7,8}[0-9K]?/);
+  return match?.[0] || "";
+};
+const courseFromPhotoPath = (path = "") => {
+  const parts = String(path).split(/[\\/]/).filter(Boolean);
+  return (parts.length > 1 ? parts[parts.length - 2] : "").replace(/\s+/g, " ").trim();
+};
+const readFileAsDataUrl = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(reader.result);
+  reader.onerror = () => reject(reader.error);
+  reader.readAsDataURL(file);
+});
+const loadBrowserImage = (src) => new Promise((resolve, reject) => {
+  const image = new Image();
+  image.onload = () => resolve(image);
+  image.onerror = reject;
+  image.src = src;
+});
+const resizeStudentPhoto = async (file) => {
+  const source = await readFileAsDataUrl(file);
+  const image = await loadBrowserImage(source);
+  const maxWidth = 150;
+  const scale = Math.min(1, maxWidth / image.width);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(image.width * scale));
+  canvas.height = Math.max(1, Math.round(image.height * scale));
+  const context = canvas.getContext("2d");
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", 0.72);
+};
 const addDays = (n) => {
   const date = new Date();
   date.setDate(date.getDate() + n);
@@ -502,6 +536,23 @@ function reducer(state, action) {
         else merged.unshift(row);
       });
       return { ...state, [action.collection]: merged };
+    }
+    case "IMPORT_STUDENT_PHOTOS": {
+      const photosByRut = new Map((action.photos || []).map((photo) => [normalizeRut(photo.rut), photo]));
+      return {
+        ...state,
+        students: (state.students || []).map((student) => {
+          const photo = photosByRut.get(normalizeRut(student.rut));
+          if (!photo) return student;
+          return {
+            ...student,
+            photoUrl: photo.photoUrl,
+            photoFileName: photo.fileName,
+            photoCourse: photo.course || student.course || "",
+            photoUpdatedAt: today()
+          };
+        })
+      };
     }
     case "CREATE_REQUEST": {
       const request = { ...action.request, id: uid("sol"), folio: action.request.folio || nextFolio(state.requests, "SOL"), createdAt: today(), status: "pendiente" };
@@ -1014,6 +1065,30 @@ function Modal({ title, children, onClose, wide = false }) {
         </div>
         <div className="p-3 sm:p-5">{children}</div>
       </div>
+    </div>
+  );
+}
+
+function StudentPhotoAvatar({ person, size = "sm" }) {
+  const initials = String(person?.name || "?")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase();
+  const sizes = {
+    xs: "h-9 w-9 text-xs",
+    sm: "h-12 w-12 text-sm",
+    lg: "h-24 w-24 text-xl"
+  };
+  const className = `${sizes[size] || sizes.sm} shrink-0 rounded-md border border-steel-700 object-cover`;
+  if (person?.photoUrl) {
+    return <img src={person.photoUrl} alt={`Foto de ${person.name}`} className={className} />;
+  }
+  return (
+    <div className={`${className} grid place-items-center bg-steel-800 font-bold text-slate-300`}>
+      {initials}
     </div>
   );
 }
@@ -2015,9 +2090,14 @@ function CrudTable({ collection, config }) {
   const [deleting, setDeleting] = useState(null);
   const [profile, setProfile] = useState(null);
   const hasPersonProfile = collection === "students" || collection === "teachers";
-  const rows = state[collection].filter((row) => JSON.stringify(row).toLowerCase().includes(query.toLowerCase()));
+  const rows = state[collection].filter((row) => {
+    const { photoUrl, ...searchable } = row;
+    return JSON.stringify(searchable).toLowerCase().includes(query.toLowerCase());
+  });
   const perPage = 7;
   const pageRows = rows.slice((page - 1) * perPage, page * perPage);
+  const tableColumns = collection === "students" ? [["photoPreview", "Foto"], ...config.columns] : config.columns;
+  const tableRows = pageRows;
   const pages = Math.max(1, Math.ceil(rows.length / perPage));
   const save = (row) => {
     const finalRow = row.code ? row : { ...row, code: generateEntityCode(state, collection, row) };
@@ -2031,7 +2111,7 @@ function CrudTable({ collection, config }) {
         <div className="relative max-w-md flex-1"><Search className="pointer-events-none absolute left-3 top-2.5 text-slate-500" size={18} /><input className={`${inputClass} pl-10`} placeholder={`Buscar en ${config.title.toLowerCase()}`} value={query} onChange={(e) => { setQuery(e.target.value); setPage(1); }} /></div>
         <Button onClick={() => setEditing({})}><Plus size={16} />Agregar</Button>
       </div>
-      <DataTable rows={pageRows} columns={config.columns} actions={(row) => (
+      <DataTable rows={tableRows} columns={tableColumns} actions={(row) => (
         <div className="flex justify-end gap-2">
           {hasPersonProfile && <Button variant="ghost" className="px-2" onClick={() => setProfile(row)} title="Ficha rápida"><UserRound size={16} /></Button>}
           <Button variant="ghost" className="px-2" onClick={() => setEditing(row)} title="Editar"><Edit3 size={16} /></Button>
@@ -2072,6 +2152,16 @@ function PersonProfileModal({ person, type, onClose }) {
   return (
     <Modal title={`Ficha rápida · ${person.name}`} onClose={onClose} wide>
       <div className="grid gap-5">
+        {type === "student" && (
+          <div className="flex flex-wrap items-center gap-4 rounded-md border border-steel-700 bg-steel-850 p-3">
+            <StudentPhotoAvatar person={person} size="lg" />
+            <div className="min-w-0">
+              <p className="text-lg font-bold text-white">{person.name}</p>
+              <p className="text-sm text-slate-300">{person.rut || "Sin RUT"} · {person.course || "Sin curso"}</p>
+              <p className="mt-1 text-xs text-slate-400">{person.photoFileName ? `Foto asociada desde ${person.photoCourse || "carpeta importada"} · ${person.photoFileName}` : "Sin foto asociada todavía"}</p>
+            </div>
+          </div>
+        )}
         <div className="grid gap-3 md:grid-cols-4">
           <div className="rounded-md border border-steel-700 bg-steel-850 p-3"><p className="text-sm text-slate-400">Tipo</p><p className="text-xl font-bold text-white">{typeLabel}</p></div>
           <div className="rounded-md border border-steel-700 bg-steel-850 p-3"><p className="text-sm text-slate-400">Préstamos activos</p><p className="text-xl font-bold text-white">{activeLoans.length}</p></div>
@@ -3379,7 +3469,7 @@ function normalizeHumanistCourse(course) {
 }
 
 function DatabaseImport() {
-  const { dispatch, notify } = useApp();
+  const { state, dispatch, notify } = useApp();
   const [collection, setCollection] = useState("students");
   const [rows, setRows] = useState([]);
   const [fileName, setFileName] = useState("");
@@ -3398,7 +3488,8 @@ function DatabaseImport() {
     setFileName("");
   };
   return (
-    <div className="grid gap-6 xl:grid-cols-[.85fr_1.15fr]">
+    <div className="grid gap-6">
+      <div className="grid gap-6 xl:grid-cols-[.85fr_1.15fr]">
       <div className="panel grid gap-4">
         <h2 className="section-title"><Database size={18} />Importar alumnos, profesores o inventario</h2>
         <Field label="Base de datos destino">
@@ -3423,6 +3514,93 @@ function DatabaseImport() {
         <h2 className="section-title"><FileText size={18} />Vista previa {fileName && `· ${fileName}`}</h2>
         <EditablePreview rows={rows} setRows={setRows} config={config} />
       </div>
+      </div>
+      <StudentPhotoImport students={state.students || []} dispatch={dispatch} notify={notify} />
+    </div>
+  );
+}
+
+function StudentPhotoImport({ students, dispatch, notify }) {
+  const [photoRows, setPhotoRows] = useState([]);
+  const [processing, setProcessing] = useState(false);
+  const studentsByRut = useMemo(() => {
+    const entries = (students || [])
+      .map((student) => [normalizeRut(student.rut), student])
+      .filter(([rut]) => rut);
+    return new Map(entries);
+  }, [students]);
+  const matchedRows = photoRows.filter((row) => row.student);
+  const unmatchedRows = photoRows.filter((row) => !row.student);
+  const onPhotos = (fileList) => {
+    const imageFiles = Array.from(fileList || []).filter((file) => file.type.startsWith("image/") || /\.(jpe?g|png|webp)$/i.test(file.name));
+    const parsed = imageFiles.map((file) => {
+      const rut = rutFromPhotoFileName(file.name);
+      const course = courseFromPhotoPath(file.webkitRelativePath || file.name);
+      return {
+        file,
+        fileName: file.name,
+        rut,
+        course,
+        student: studentsByRut.get(rut) || null
+      };
+    });
+    setPhotoRows(parsed);
+    notify(`${parsed.length} foto(s) leida(s), ${parsed.filter((row) => row.student).length} con coincidencia por RUT`);
+  };
+  const importPhotos = async () => {
+    if (!matchedRows.length) return notify("No hay fotos con coincidencia para importar", "error");
+    setProcessing(true);
+    try {
+      const photos = [];
+      for (const row of matchedRows) {
+        photos.push({
+          rut: row.rut,
+          course: row.course,
+          fileName: row.fileName,
+          photoUrl: await resizeStudentPhoto(row.file)
+        });
+      }
+      dispatch({ type: "IMPORT_STUDENT_PHOTOS", photos });
+      notify(`${photos.length} foto(s) asociada(s) a alumnos`);
+      setPhotoRows([]);
+    } catch (error) {
+      notify(`No se pudieron importar las fotos: ${error.message || error}`, "error");
+    } finally {
+      setProcessing(false);
+    }
+  };
+  return (
+    <div className="panel grid gap-4">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <h2 className="section-title"><GraduationCap size={18} />Fotos de estudiantes</h2>
+          <p className="text-sm text-slate-400">Selecciona la carpeta MEDIA o un curso completo. La asociacion se hace por RUT desde el nombre del archivo.</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <label className="inline-flex min-h-10 cursor-pointer items-center justify-center gap-2 rounded-md border border-steel-700 bg-steel-800 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-steel-700">
+            <Upload size={16} />Seleccionar carpeta/fotos
+            <input className="hidden" type="file" accept="image/*" multiple webkitdirectory="" directory="" onChange={(event) => onPhotos(event.target.files)} />
+          </label>
+          <Button disabled={!matchedRows.length || processing} onClick={importPhotos}><Save size={16} />{processing ? "Procesando..." : "Asociar fotos"}</Button>
+        </div>
+      </div>
+      <div className="grid gap-3 md:grid-cols-3">
+        <div className="rounded-md border border-steel-700 bg-steel-850 p-3"><p className="text-sm text-slate-400">Fotos leidas</p><p className="text-2xl font-bold text-white">{photoRows.length}</p></div>
+        <div className="rounded-md border border-green-500/40 bg-green-500/10 p-3"><p className="text-sm text-green-200">Con coincidencia</p><p className="text-2xl font-bold text-white">{matchedRows.length}</p></div>
+        <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3"><p className="text-sm text-amber-200">Por revisar</p><p className="text-2xl font-bold text-white">{unmatchedRows.length}</p></div>
+      </div>
+      {photoRows.length > 0 && (
+        <div className="grid gap-3 lg:grid-cols-2">
+          <div>
+            <p className="mb-2 text-sm font-semibold text-white">Coincidencias encontradas</p>
+            <DataTable rows={matchedRows.slice(0, 12).map((row) => ({ name: row.student.name, rut: row.rut, course: row.course || row.student.course, fileName: row.fileName }))} columns={[["name", "Alumno"], ["rut", "RUT"], ["course", "Curso"], ["fileName", "Archivo"]]} compact />
+          </div>
+          <div>
+            <p className="mb-2 text-sm font-semibold text-white">Sin coincidencia por RUT</p>
+            <DataTable rows={unmatchedRows.slice(0, 12).map((row) => ({ rut: row.rut || "Sin RUT detectado", course: row.course, fileName: row.fileName }))} columns={[["rut", "RUT detectado"], ["course", "Carpeta"], ["fileName", "Archivo"]]} compact />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -4473,6 +4651,7 @@ function DataTable({ rows, columns, actions, compact = false }) {
 
 function renderCell(row, key) {
   const value = row[key];
+  if (key === "photoPreview") return <StudentPhotoAvatar person={row} size="xs" />;
   if (key.toLowerCase().includes("date") || key === "fecha") return value ? formatDate(value) : "";
   if (key === "status" || key === "estado") {
     const tone = String(value).includes("vencido") || String(value).includes("reparación") ? "red" : String(value).includes("activo") || String(value).includes("préstamo") ? "amber" : "green";
