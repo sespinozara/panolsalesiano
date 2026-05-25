@@ -156,6 +156,45 @@ const resizeStudentPhoto = async (file) => {
   context.drawImage(image, 0, 0, canvas.width, canvas.height);
   return canvas.toDataURL("image/jpeg", 0.72);
 };
+const STUDENT_PHOTO_DB = "panol-student-photos";
+const STUDENT_PHOTO_STORE = "photos";
+const openStudentPhotoDb = () => new Promise((resolve, reject) => {
+  const request = indexedDB.open(STUDENT_PHOTO_DB, 1);
+  request.onupgradeneeded = () => request.result.createObjectStore(STUDENT_PHOTO_STORE);
+  request.onsuccess = () => resolve(request.result);
+  request.onerror = () => reject(request.error);
+});
+const saveStudentPhoto = async (key, photoUrl) => {
+  const db = await openStudentPhotoDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STUDENT_PHOTO_STORE, "readwrite");
+    tx.objectStore(STUDENT_PHOTO_STORE).put(photoUrl, key);
+    tx.oncomplete = () => {
+      db.close();
+      resolve();
+    };
+    tx.onerror = () => {
+      db.close();
+      reject(tx.error);
+    };
+  });
+};
+const getStudentPhoto = async (key) => {
+  if (!key) return "";
+  const db = await openStudentPhotoDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STUDENT_PHOTO_STORE, "readonly");
+    const request = tx.objectStore(STUDENT_PHOTO_STORE).get(key);
+    request.onsuccess = () => resolve(request.result || "");
+    request.onerror = () => reject(request.error);
+    tx.oncomplete = () => db.close();
+  });
+};
+const studentPhotoKey = (rut) => `student-photo-${normalizeRut(rut)}`;
+const stripHeavyStudentPhotos = (state) => ({
+  ...state,
+  students: (state.students || []).map(({ photoUrl, ...student }) => student)
+});
 const addDays = (n) => {
   const date = new Date();
   date.setDate(date.getDate() + n);
@@ -413,7 +452,7 @@ const CLOUD_STATE_ID = "panol-central-colegio-salesiano";
 function loadInitialState() {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
-    return stored ? removeDemoData(JSON.parse(stored)) : createEmptyState();
+    return stored ? stripHeavyStudentPhotos(removeDemoData(JSON.parse(stored))) : createEmptyState();
   } catch {
     return createEmptyState();
   }
@@ -429,8 +468,8 @@ function mergeRowsById(remoteRows = [], localRows = []) {
 }
 
 function mergeCloudState(localState, remoteState) {
-  const local = removeDemoData(localState || createEmptyState());
-  const remote = removeDemoData(remoteState || createEmptyState());
+  const local = stripHeavyStudentPhotos(removeDemoData(localState || createEmptyState()));
+  const remote = stripHeavyStudentPhotos(removeDemoData(remoteState || createEmptyState()));
   const merged = { ...remote, ...local, settings: { ...(remote.settings || {}), ...(local.settings || {}) } };
   cloudMergeCollections.forEach((collection) => {
     merged[collection] = mergeRowsById(remote[collection] || [], local[collection] || []);
@@ -443,7 +482,7 @@ function mergeCloudState(localState, remoteState) {
 function reducer(state, action) {
   switch (action.type) {
     case "HYDRATE_STATE":
-      return removeDemoData(action.state || createEmptyState());
+      return stripHeavyStudentPhotos(removeDemoData(action.state || createEmptyState()));
     case "ADD_AUDIT":
       return { ...state, auditLog: [action.entry, ...(state.auditLog || [])].slice(0, 500) };
     case "REGISTER_BACKUP":
@@ -546,7 +585,7 @@ function reducer(state, action) {
           if (!photo) return student;
           return {
             ...student,
-            photoUrl: photo.photoUrl,
+            photoKey: photo.photoKey || studentPhotoKey(photo.rut),
             photoFileName: photo.fileName,
             photoCourse: photo.course || student.course || "",
             photoUpdatedAt: today()
@@ -781,22 +820,29 @@ function AppProvider({ children }) {
     };
   }, [cloudSession?.access_token]);
 
-  useEffect(() => localStorage.setItem(STORAGE_KEY, JSON.stringify(state)), [state]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(stripHeavyStudentPhotos(state)));
+    } catch (error) {
+      console.error("No se pudo guardar estado local", error);
+    }
+  }, [state]);
   useEffect(() => {
     if (!isSupabaseConfigured || !supabase || !cloudReady || !cloudSession) return;
     const handle = setTimeout(async () => {
+      const persistedState = stripHeavyStudentPhotos(state);
       const nextRevision = cloudRevision.current + 1;
       let error = null;
       let savedRevision = nextRevision;
       if (cloudRevision.current === 0) {
         const result = await supabase
           .from("app_state")
-          .upsert({ id: CLOUD_STATE_ID, data: state, revision: nextRevision, updated_at: new Date().toISOString() });
+          .upsert({ id: CLOUD_STATE_ID, data: persistedState, revision: nextRevision, updated_at: new Date().toISOString() });
         error = result.error;
       } else {
         const result = await supabase
           .from("app_state")
-          .update({ data: state, revision: nextRevision, updated_at: new Date().toISOString() })
+          .update({ data: persistedState, revision: nextRevision, updated_at: new Date().toISOString() })
           .eq("id", CLOUD_STATE_ID)
           .eq("revision", cloudRevision.current)
           .select("revision")
@@ -814,7 +860,7 @@ function AppProvider({ children }) {
             setCloudStatus("Conflicto de sincronización. Recarga antes de seguir.");
             return;
           }
-          const mergedState = mergeCloudState(state, latest.data.data);
+          const mergedState = mergeCloudState(persistedState, latest.data.data);
           savedRevision = Number(latest.data.revision || 0) + 1;
           const mergedSave = await supabase
             .from("app_state")
@@ -1070,6 +1116,32 @@ function Modal({ title, children, onClose, wide = false }) {
 }
 
 function StudentPhotoAvatar({ person, size = "sm" }) {
+  const [photoUrl, setPhotoUrl] = useState(person?.photoUrl || "");
+  useEffect(() => {
+    let mounted = true;
+    if (person?.photoUrl) {
+      setPhotoUrl(person.photoUrl);
+      return () => {
+        mounted = false;
+      };
+    }
+    if (!person?.photoKey) {
+      setPhotoUrl("");
+      return () => {
+        mounted = false;
+      };
+    }
+    getStudentPhoto(person.photoKey)
+      .then((url) => {
+        if (mounted) setPhotoUrl(url);
+      })
+      .catch(() => {
+        if (mounted) setPhotoUrl("");
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [person?.photoKey, person?.photoUrl]);
   const initials = String(person?.name || "?")
     .split(/\s+/)
     .filter(Boolean)
@@ -1083,8 +1155,8 @@ function StudentPhotoAvatar({ person, size = "sm" }) {
     lg: "h-24 w-24 text-xl"
   };
   const className = `${sizes[size] || sizes.sm} shrink-0 rounded-md border border-steel-700 object-cover`;
-  if (person?.photoUrl) {
-    return <img src={person.photoUrl} alt={`Foto de ${person.name}`} className={className} />;
+  if (photoUrl) {
+    return <img src={photoUrl} alt={`Foto de ${person.name}`} className={className} />;
   }
   return (
     <div className={`${className} grid place-items-center bg-steel-800 font-bold text-slate-300`}>
@@ -3553,11 +3625,14 @@ function StudentPhotoImport({ students, dispatch, notify }) {
     try {
       const photos = [];
       for (const row of matchedRows) {
+        const photoKey = studentPhotoKey(row.rut);
+        const photoUrl = await resizeStudentPhoto(row.file);
+        await saveStudentPhoto(photoKey, photoUrl);
         photos.push({
           rut: row.rut,
           course: row.course,
           fileName: row.fileName,
-          photoUrl: await resizeStudentPhoto(row.file)
+          photoKey
         });
       }
       dispatch({ type: "IMPORT_STUDENT_PHOTOS", photos });
