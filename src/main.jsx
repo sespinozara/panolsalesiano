@@ -2528,6 +2528,17 @@ function LoanForm() {
               ))}
             </div>
           )}
+          {selectedRequester && (
+            <div className="mt-2 flex items-center gap-3 rounded-md border border-salesian-blue/25 bg-salesian-blue/5 p-2">
+              {requesterType === "student" && <StudentPhotoAvatar person={selectedRequester} size="sm" />}
+              <div className="min-w-0">
+                <p className="truncate text-sm font-bold text-slate-950 dark:text-white">{selectedRequester.name}</p>
+                <p className="truncate text-xs text-slate-600 dark:text-slate-300">
+                  {selectedRequester.rut || "Sin RUT"} · {selectedRequester.course || selectedRequester.department || "Sin curso/departamento"} · {selectedRequester.email || "Sin email"}
+                </p>
+              </div>
+            </div>
+          )}
         </div>
         {requesterType === "student" && (
           <div className="flex items-end">
