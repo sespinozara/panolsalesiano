@@ -341,10 +341,51 @@ body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  margin-top: 0;
 }
 
 .pc-main {
   flex: 1 1 auto;
+}
+
+@media (min-width: 1024px) {
+  .pc-shell:not(.pc-teacher-shell) {
+    display: grid !important;
+    grid-template-columns: 18rem minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .pc-shell:not(.pc-teacher-shell) > .pc-sidebar {
+    position: sticky !important;
+    top: 0 !important;
+    right: auto !important;
+    bottom: auto !important;
+    left: auto !important;
+    grid-column: 1;
+    grid-row: 1;
+    width: 18rem !important;
+    height: 100vh;
+    min-height: 100vh;
+    align-self: start;
+  }
+
+  .pc-shell:not(.pc-teacher-shell) > .pc-content {
+    grid-column: 2;
+    grid-row: 1;
+    min-width: 0;
+    align-self: start;
+    padding-left: 0 !important;
+    margin-top: 0 !important;
+    transform: none !important;
+  }
+}
+
+@media (max-width: 1023px) {
+  .pc-shell:not(.pc-teacher-shell) > .pc-content {
+    padding-left: 0 !important;
+    margin-top: 0 !important;
+    transform: none !important;
+  }
 }
 
 .pc-main,
