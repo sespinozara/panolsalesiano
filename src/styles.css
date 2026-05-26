@@ -314,6 +314,9 @@ body {
 
 .pc-shell {
   position: relative;
+  min-height: 100vh;
+  overflow-x: hidden;
+  isolation: isolate;
   background:
     radial-gradient(circle at 16% 0%, rgba(244, 196, 48, 0.16), transparent 28%),
     radial-gradient(circle at 88% 16%, rgba(45, 123, 216, 0.14), transparent 30%),
@@ -324,6 +327,7 @@ body {
   content: "";
   position: fixed;
   inset: 0;
+  z-index: 0;
   pointer-events: none;
   opacity: 0.42;
   background-image: radial-gradient(rgba(21, 87, 167, 0.12) 1px, transparent 1px);
@@ -331,10 +335,23 @@ body {
   mask-image: linear-gradient(to bottom, #000 0%, transparent 72%);
 }
 
+.pc-content {
+  position: relative;
+  z-index: 1;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.pc-main {
+  flex: 1 1 auto;
+}
+
 .pc-main,
 .pc-topbar,
 .pc-sidebar,
-.pc-mobile-nav {
+.pc-mobile-nav,
+.pc-content {
   position: relative;
   z-index: 1;
 }

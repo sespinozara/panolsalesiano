@@ -1281,7 +1281,7 @@ function Layout({ section, setSection, currentUser, onLogout }) {
           <p>GitHub + Cloudflare activo</p>
         </div>
       </aside>
-      <div className="lg:pl-72">
+      <div className="pc-content lg:pl-72">
         <header className="pc-topbar sticky top-0 z-30 border-b border-steel-800 bg-steel-950/92 px-3 py-3 backdrop-blur md:px-8 md:py-4">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div className="min-w-0">
