@@ -1095,24 +1095,24 @@ function GlobalSearch({ allowedSections = [], onSelect }) {
 
 function Button({ children, variant = "primary", className = "", ...props }) {
   const variants = {
-    primary: "bg-safety-500 text-steel-950 hover:bg-safety-600",
-    secondary: "bg-steel-800 text-slate-100 hover:bg-steel-700 border border-steel-700",
-    ghost: "text-slate-300 hover:bg-steel-800",
-    danger: "bg-red-600 text-white hover:bg-red-700"
+    primary: "pc-button-primary bg-safety-500 text-steel-950 hover:bg-safety-600",
+    secondary: "pc-button-secondary bg-steel-800 text-slate-100 hover:bg-steel-700 border border-steel-700",
+    ghost: "pc-button-ghost text-slate-300 hover:bg-steel-800",
+    danger: "pc-button-danger bg-red-600 text-white hover:bg-red-700"
   };
-  return <button className={`inline-flex min-h-10 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${variants[variant]} ${className}`} {...props}>{children}</button>;
+  return <button className={`pc-button inline-flex min-h-10 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${variants[variant]} ${className}`} {...props}>{children}</button>;
 }
 
 function Field({ label, children }) {
   return <label className="grid gap-1 text-sm text-slate-300"><span>{label}</span>{children}</label>;
 }
 
-const inputClass = "w-full rounded-md border border-steel-700 bg-steel-900 px-3 py-2 text-sm text-slate-100 outline-none focus:border-safety-500";
+const inputClass = "pc-input w-full rounded-md border border-steel-700 bg-steel-900 px-3 py-2 text-sm text-slate-100 outline-none focus:border-safety-500";
 
 function Modal({ title, children, onClose, wide = false }) {
   return (
-    <div className="fixed inset-0 z-40 grid place-items-center bg-black/60 p-2 sm:p-4" onMouseDown={onClose}>
-      <div className={`max-h-[92vh] w-full ${wide ? "max-w-6xl" : "max-w-2xl"} overflow-auto rounded-lg border border-steel-700 bg-steel-900 shadow-2xl`} onMouseDown={(event) => event.stopPropagation()}>
+    <div className="pc-modal-backdrop fixed inset-0 z-40 grid place-items-center bg-black/60 p-2 sm:p-4" onMouseDown={onClose}>
+      <div className={`pc-modal-card max-h-[92vh] w-full ${wide ? "max-w-6xl" : "max-w-2xl"} overflow-auto rounded-lg border border-steel-700 bg-steel-900 shadow-2xl`} onMouseDown={(event) => event.stopPropagation()}>
         <div className="flex items-center justify-between gap-3 border-b border-steel-700 px-3 py-3 sm:px-5 sm:py-4">
           <h3 className="text-lg font-semibold text-white">{title}</h3>
           <Button variant="ghost" onClick={onClose} className="px-2"><X size={18} /></Button>
@@ -1259,8 +1259,8 @@ function Layout({ section, setSection, currentUser, onLogout }) {
     if (!currentUser?.permissions?.includes(section)) setSection(currentUser?.permissions?.[0] || "dashboard");
   }, [currentUser, section, setSection]);
   return (
-    <div className={`min-h-screen bg-steel-950 text-slate-100 ${isLight ? "theme-light" : "theme-dark"}`}>
-      <aside className="fixed inset-y-0 left-0 hidden w-72 border-r border-steel-800 bg-steel-900 lg:block">
+    <div className={`pc-shell min-h-screen bg-steel-950 text-slate-100 ${isLight ? "theme-light" : "theme-dark"}`}>
+      <aside className="pc-sidebar fixed inset-y-0 left-0 hidden w-72 border-r border-steel-800 bg-steel-900 lg:block">
         <div className="flex h-20 items-center gap-3 border-b border-steel-800 px-6">
           <div className="grid h-12 w-12 place-items-center rounded-md border border-safety-500/50 bg-white p-1 shadow-sm"><img src="/logo-salesiano.png" alt="Colegio Salesiano" className="h-full w-full object-contain" /></div>
           <div>
@@ -1276,13 +1276,13 @@ function Layout({ section, setSection, currentUser, onLogout }) {
             </button>
           ))}
         </nav>
-        <div className="absolute bottom-4 left-4 right-4 rounded-md border border-steel-800 bg-steel-950/60 px-4 py-3 text-xs text-slate-400">
+        <div className="pc-version-card absolute bottom-4 left-4 right-4 rounded-md border border-steel-800 bg-steel-950/60 px-4 py-3 text-xs text-slate-400">
           <p className="font-semibold text-slate-200">PAÑOL CENTRAL {APP_VERSION}</p>
           <p>GitHub + Cloudflare activo</p>
         </div>
       </aside>
       <div className="lg:pl-72">
-        <header className="sticky top-0 z-30 border-b border-steel-800 bg-steel-950/92 px-3 py-3 backdrop-blur md:px-8 md:py-4">
+        <header className="pc-topbar sticky top-0 z-30 border-b border-steel-800 bg-steel-950/92 px-3 py-3 backdrop-blur md:px-8 md:py-4">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div className="min-w-0">
               <p className="text-sm text-slate-400">Pañol / {titles[section]}</p>
@@ -1309,7 +1309,7 @@ function Layout({ section, setSection, currentUser, onLogout }) {
               </Button>
               <Button variant="secondary" onClick={onLogout} className="shrink-0 px-3"><LogOut size={16} />Salir</Button>
             </div>
-            <div className="mobile-nav -mx-1 flex gap-2 overflow-x-auto px-1 pb-1 lg:hidden">
+            <div className="pc-mobile-nav mobile-nav -mx-1 flex gap-2 overflow-x-auto px-1 pb-1 lg:hidden">
               {allowedNav.map(([id, label, Icon]) => (
                 <Button key={id} variant={section === id || (id === "keys" && keyPanelOpen) ? "primary" : "secondary"} onClick={() => id === "keys" ? setKeyPanelOpen(true) : setSection(id)} className="shrink-0 whitespace-nowrap">
                   <Icon size={16} />{label}
@@ -1318,7 +1318,7 @@ function Layout({ section, setSection, currentUser, onLogout }) {
             </div>
           </div>
         </header>
-        <main className="app-main p-3 md:p-8">
+        <main className="pc-main app-main p-3 md:p-8">
           {state.settings.showAdminAlertStrip !== false && (pendingRequestsCount > 0 || unreadMessagesCount > 0 || preparingRequestsCount > 0) && (
             <div className="admin-alert-strip mb-4 grid gap-2 rounded-lg border border-safety-500/40 bg-safety-500/10 p-3 text-sm text-slate-100 md:grid-cols-[1fr_auto] md:items-center">
               <div className="flex flex-wrap gap-2">
@@ -5342,8 +5342,8 @@ function TeacherWorkspace({ currentUser, onLogout }) {
     setMessage("");
   };
   return (
-    <div className="min-h-screen bg-steel-950 text-slate-100 theme-light">
-      <header className="border-b border-steel-800 bg-steel-950/92 px-3 py-3 md:px-8 md:py-4">
+    <div className="pc-shell pc-teacher-shell min-h-screen bg-steel-950 text-slate-100 theme-light">
+      <header className="pc-topbar border-b border-steel-800 bg-steel-950/92 px-3 py-3 md:px-8 md:py-4">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-3">
             <div className="grid h-12 w-12 shrink-0 place-items-center rounded-md border border-safety-500/50 bg-white p-1 shadow-sm"><img src="/logo-salesiano.png" alt="Colegio Salesiano" className="h-full w-full object-contain" /></div>
@@ -5355,8 +5355,8 @@ function TeacherWorkspace({ currentUser, onLogout }) {
           </div>
         </div>
       </header>
-      <main className="app-main mx-auto grid max-w-7xl gap-4 p-3 md:gap-6 md:p-8">
-        <div className="mobile-nav -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+      <main className="pc-main app-main mx-auto grid max-w-7xl gap-4 p-3 md:gap-6 md:p-8">
+        <div className="pc-mobile-nav mobile-nav -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
           {[["home", LayoutDashboard, "Inicio"], ["inventory", Boxes, "Inventario"], ...(canReserveWorkshop ? [["workshop", CalendarDays, "Reservas taller"]] : []), ["history", History, "Mis solicitudes"]].map(([id, Icon, label]) => <Button key={id} variant={tab === id ? "primary" : "secondary"} onClick={() => setTab(id)} className="shrink-0 whitespace-nowrap"><Icon size={16} />{label}</Button>)}
         </div>
         {lastAdded && (
