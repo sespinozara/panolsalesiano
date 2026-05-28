@@ -2382,7 +2382,7 @@ function CrudTable({ collection, config }) {
   };
 
   return (
-    <div className="grid items-start gap-4 lg:grid-cols-[260px_1fr]">
+    <div className={isMaterials ? "grid items-start gap-4 lg:grid-cols-[260px_1fr]" : "grid gap-4"}>
       {isMaterials && (
         <aside className="self-start lg:sticky lg:top-6">
           <div className="panel">
