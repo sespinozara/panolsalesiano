@@ -1660,11 +1660,25 @@ function Dashboard({ openLoans, openKeys }) {
     acc[item.code].qty += Number(item.qty);
     return acc;
   }, {})).sort((a, b) => b.qty - a.qty).slice(0, 5);
-  const lineData = Array.from({ length: 8 }).map((_, ix) => {
-    const weekStart = new Date();
-    weekStart.setDate(weekStart.getDate() - (7 - ix) * 7);
-    const label = `S${ix + 1}`;
-    return { label, prestamos: state.loans.filter((l) => new Date(l.createdAt) >= weekStart).length + ix % 3 };
+  const lineData = Array.from({ length: 14 }).map((_, ix) => {
+  const date = new Date();
+  date.setHours(12, 0, 0, 0);
+  date.setDate(date.getDate() - (13 - ix));
+
+  const dateKey = date.toISOString().slice(0, 10);
+
+  const prestamos = (state.loans || []).filter((loan) => {
+    const loanDate = String(loan.createdAt || "").slice(0, 10);
+    return loanDate === dateKey;
+  }).length;
+
+  return {
+    label: date.toLocaleDateString("es-CL", {
+      day: "2-digit",
+      month: "2-digit"
+    }),
+    prestamos
+  };
   });
   const kpis = [
     ["stock", "Materiales en stock", state.materials.reduce((sum, m) => sum + Number(m.stock), 0), Boxes, "blue"],
@@ -1777,7 +1791,7 @@ function Dashboard({ openLoans, openKeys }) {
             <BarChart data={requested}><CartesianGrid strokeDasharray="3 3" stroke="#cbd5e1" /><XAxis dataKey="name" stroke="#64748b" tick={{ fontSize: 11 }} /><YAxis stroke="#64748b" /><Tooltip contentStyle={chartTooltipStyle} labelStyle={{ color: "#061225" }} /><Bar dataKey="qty" fill="#f59e0b" radius={[4, 4, 0, 0]} /></BarChart>
           </ResponsiveContainer>
         </ChartPanel>
-        <ChartPanel title="Préstamos por semana">
+        <ChartPanel title="Préstamos por día">
           <ResponsiveContainer width="100%" height={145}>
             <LineChart data={lineData}><CartesianGrid strokeDasharray="3 3" stroke="#cbd5e1" /><XAxis dataKey="label" stroke="#64748b" /><YAxis stroke="#64748b" /><Tooltip contentStyle={chartTooltipStyle} labelStyle={{ color: "#061225" }} /><Line type="monotone" dataKey="prestamos" stroke="#38bdf8" strokeWidth={3} dot={{ fill: "#38bdf8" }} /></LineChart>
           </ResponsiveContainer>
@@ -2210,6 +2224,7 @@ function InventoryBulkPanel() {
     </div>
   );
 }
+
 
 function CrudTable({ collection, config }) {
   const { state, dispatch, notify } = useApp();
