@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { createPortal } from "react-dom";
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
 import {
   AlertTriangle,
@@ -939,39 +940,86 @@ function Badge({ children, tone = "slate" }) {
 function NotificationsBell({ notifications, onMarkRead }) {
   const [open, setOpen] = useState(false);
   const unread = notifications.length;
+
+  const popover = open ? createPortal(
+    <div
+      className="fixed z-[2147483647] w-[360px] max-w-[calc(100vw-1rem)] rounded-xl border border-slate-200 bg-white p-3 shadow-2xl"
+      style={{
+        top: "82px",
+        right: "28px"
+      }}
+    >
+      <div className="mb-2 flex items-center justify-between gap-2 border-b border-slate-200 pb-2">
+        <p className="font-bold text-slate-950">Alertas</p>
+
+        <div className="flex items-center gap-2">
+          {unread > 0 && (
+            <button
+              type="button"
+              onClick={onMarkRead}
+              className="rounded-md px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+            >
+              Marcar leídas
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setOpen(false)}
+            className="grid h-7 w-7 place-items-center rounded-full text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      </div>
+
+      <div className="grid max-h-[360px] gap-2 overflow-auto">
+        {notifications.length === 0 && (
+          <p className="py-4 text-center text-sm text-slate-500">
+            Sin alertas nuevas
+          </p>
+        )}
+
+        {notifications.map((item, index) => (
+          <button
+            key={index}
+            type="button"
+            onClick={() => {
+              item.onOpen?.();
+              setOpen(false);
+            }}
+            className="w-full rounded-lg border border-slate-200 bg-slate-50 p-3 text-left transition hover:border-yellow-400 hover:bg-yellow-50"
+          >
+            <p className="font-semibold text-slate-950">{item.title}</p>
+            <p className="mt-1 text-sm text-slate-600">{item.body}</p>
+            <p className="mt-2 text-xs font-semibold text-yellow-700">
+              {item.actionLabel || "Abrir"}
+            </p>
+          </button>
+        ))}
+      </div>
+    </div>,
+    document.body
+  ) : null;
+
   return (
     <div className="relative">
-      <Button variant="secondary" onClick={() => setOpen(!open)} className="relative px-3">
+      <Button
+        variant="secondary"
+        onClick={() => setOpen(!open)}
+        className="relative px-3"
+      >
         <Bell size={16} />
         Alertas
-        {unread > 0 && <span className="absolute -right-1 -top-1 grid h-5 min-w-5 place-items-center rounded-full bg-red-600 px-1 text-xs text-white">{unread}</span>}
+
+        {unread > 0 && (
+          <span className="absolute -right-1 -top-1 grid h-5 min-w-5 place-items-center rounded-full bg-red-600 px-1 text-xs text-white">
+            {unread}
+          </span>
+        )}
       </Button>
-      {open && (
-        <div className="notification-popover absolute right-0 z-50 mt-2 w-96 max-w-[calc(100vw-2rem)] rounded-lg border border-steel-700 bg-steel-900 p-3 shadow-2xl">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <p className="font-bold text-white">Alertas</p>
-            {unread > 0 && <Button variant="ghost" className="px-2 py-1" onClick={onMarkRead}>Marcar leídas</Button>}
-          </div>
-          <div className="grid max-h-80 gap-2 overflow-auto">
-            {notifications.length === 0 && <p className="py-4 text-center text-sm text-slate-400">Sin alertas nuevas</p>}
-            {notifications.map((item, index) => (
-              <button
-                key={index}
-                type="button"
-                onClick={() => {
-                  item.onOpen?.();
-                  setOpen(false);
-                }}
-                className="w-full rounded-md border border-steel-700 bg-steel-850 p-3 text-left transition hover:border-safety-500 hover:bg-steel-800"
-              >
-                <p className="font-semibold text-white">{item.title}</p>
-                <p className="text-sm text-slate-400">{item.body}</p>
-                <p className="mt-2 text-xs font-semibold text-safety-500">{item.actionLabel || "Abrir"}</p>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+
+      {popover}
     </div>
   );
 }
@@ -1100,7 +1148,16 @@ function Button({ children, variant = "primary", className = "", ...props }) {
     ghost: "pc-button-ghost text-slate-300 hover:bg-steel-800",
     danger: "pc-button-danger bg-red-600 text-white hover:bg-red-700"
   };
-  return <button className={`pc-button inline-flex min-h-10 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${variants[variant]} ${className}`} {...props}>{children}</button>;
+
+  return (
+    <button
+      {...props}
+      type={props.type || "button"}
+      className={`pc-button inline-flex min-h-10 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${variants[variant]} ${className}`}
+    >
+      {children}
+    </button>
+  );
 }
 
 function Field({ label, children }) {
@@ -2112,19 +2169,11 @@ function People() {
 }
 
 function Inventory() {
-  const [tab, setTab] = useState("materials");
+  const tab = "materials";
   const config = configs[tab];
-  const tabs = ["materials", "tools"];
+
   return (
     <div className="grid gap-5">
-      <div className="flex flex-wrap gap-2">
-        {tabs.map((key) => {
-          const cfg = configs[key];
-          const Icon = cfg.icon;
-          return <Button key={key} variant={tab === key ? "primary" : "secondary"} onClick={() => setTab(key)}><Icon size={16} />{cfg.title}</Button>;
-        })}
-      </div>
-      {tab === "materials" && <InventoryBulkPanel />}
       <CrudTable collection={tab} config={config} />
     </div>
   );
@@ -2169,39 +2218,378 @@ function CrudTable({ collection, config }) {
   const [editing, setEditing] = useState(null);
   const [deleting, setDeleting] = useState(null);
   const [profile, setProfile] = useState(null);
+  const [selectedCategory, setSelectedCategory] = useState("todos");
+  const [maxStock, setMaxStock] = useState("");
+  const [sortMode, setSortMode] = useState("az");
+  const [filtersOpen, setFiltersOpen] = useState(false);
+
   const hasPersonProfile = collection === "students" || collection === "teachers";
-  const rows = state[collection].filter((row) => {
-    const { photoUrl, ...searchable } = row;
-    return JSON.stringify(searchable).toLowerCase().includes(query.toLowerCase());
-  });
-  const perPage = 7;
+  const isMaterials = collection === "materials";
+
+  const categoryOptions = isMaterials
+    ? [...new Set((state.materials || []).map((item) => item.category || "Sin categoría"))].sort()
+    : [];
+
+  const stockValues = isMaterials
+    ? (state.materials || []).map((item) => Number(item.stock) || 0)
+    : [];
+
+  const highestStock = stockValues.length ? Math.max(...stockValues) : 0;
+  const stockLimit = maxStock === "" ? highestStock : Number(maxStock);
+
+  const rows = state[collection]
+    .filter((row) => {
+      const { photoUrl, ...searchable } = row;
+
+      const matchesSearch = JSON.stringify(searchable)
+        .toLowerCase()
+        .includes(query.toLowerCase());
+
+      const matchesCategory =
+        !isMaterials ||
+        selectedCategory === "todos" ||
+        (row.category || "Sin categoría") === selectedCategory;
+
+      const matchesStock =
+        !isMaterials ||
+        maxStock === "" ||
+        Number(row.stock || 0) <= stockLimit;
+
+      return matchesSearch && matchesCategory && matchesStock;
+    })
+    .sort((a, b) => {
+      if (sortMode === "az") {
+        return String(a.name || "").localeCompare(String(b.name || ""), "es", {
+          sensitivity: "base"
+        });
+      }
+
+      if (sortMode === "za") {
+        return String(b.name || "").localeCompare(String(a.name || ""), "es", {
+          sensitivity: "base"
+        });
+      }
+
+      if (sortMode === "stock_desc") {
+        return Number(b.stock || 0) - Number(a.stock || 0);
+      }
+
+      if (sortMode === "stock_asc") {
+        return Number(a.stock || 0) - Number(b.stock || 0);
+      }
+
+      return 0;
+    });
+
+  const perPage = 20;
   const pageRows = rows.slice((page - 1) * perPage, page * perPage);
   const tableColumns = collection === "students" ? [["photoPreview", "Foto"], ...config.columns] : config.columns;
   const tableRows = pageRows;
   const pages = Math.max(1, Math.ceil(rows.length / perPage));
+
+  const activeFiltersCount =
+    (selectedCategory !== "todos" ? 1 : 0) +
+    (maxStock !== "" ? 1 : 0) +
+    (sortMode !== "az" ? 1 : 0);
+
   const save = (row) => {
     const finalRow = row.code ? row : { ...row, code: generateEntityCode(state, collection, row) };
-    dispatch({ type: "UPSERT_ENTITY", collection, prefix: config.prefix, row: finalRow });
+
+    dispatch({
+      type: "UPSERT_ENTITY",
+      collection,
+      prefix: config.prefix,
+      row: finalRow
+    });
+
     notify(`${config.title.slice(0, -1) || config.title} guardado`);
     setEditing(null);
   };
+
   return (
     <div className="panel">
       <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div className="relative max-w-md flex-1"><Search className="pointer-events-none absolute left-3 top-2.5 text-slate-500" size={18} /><input className={`${inputClass} pl-10`} placeholder={`Buscar en ${config.title.toLowerCase()}`} value={query} onChange={(e) => { setQuery(e.target.value); setPage(1); }} /></div>
-        <Button onClick={() => setEditing({})}><Plus size={16} />Agregar</Button>
-      </div>
-      <DataTable rows={tableRows} columns={tableColumns} actions={(row) => (
-        <div className="flex justify-end gap-2">
-          {hasPersonProfile && <Button variant="ghost" className="px-2" onClick={() => setProfile(row)} title="Ficha rápida"><UserRound size={16} /></Button>}
-          <Button variant="ghost" className="px-2" onClick={() => setEditing(row)} title="Editar"><Edit3 size={16} /></Button>
-          <Button variant="ghost" className="px-2 text-red-300" onClick={() => setDeleting(row)} title="Eliminar"><Trash2 size={16} /></Button>
+        <div className="relative max-w-md flex-1">
+          <Search className="pointer-events-none absolute left-3 top-2.5 text-slate-500" size={18} />
+
+          <input
+            className={`${inputClass} pl-10`}
+            placeholder={`Buscar en ${config.title.toLowerCase()}`}
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setPage(1);
+            }}
+          />
         </div>
-      )} />
+
+        <div className="flex flex-wrap gap-2">
+          {isMaterials && (
+            <Button variant="secondary" onClick={() => setFiltersOpen(true)}>
+              <Boxes size={16} />
+              Filtros
+              {activeFiltersCount > 0 && (
+                <span className="ml-1 grid h-5 min-w-5 place-items-center rounded-full bg-safety-500 px-1 text-xs font-bold text-steel-950">
+                  {activeFiltersCount}
+                </span>
+              )}
+            </Button>
+          )}
+
+          <Button onClick={() => setEditing({})}>
+            <Plus size={16} />
+            Agregar
+          </Button>
+        </div>
+      </div>
+
+      {isMaterials && activeFiltersCount > 0 && (
+        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-steel-700 bg-steel-850 p-3 text-sm text-slate-300">
+          <span className="font-semibold text-white">Filtros activos:</span>
+
+          {selectedCategory !== "todos" && (
+            <span className="rounded-md border border-steel-700 bg-steel-900 px-2 py-1">
+              Categoría: {selectedCategory}
+            </span>
+          )}
+
+          {maxStock !== "" && (
+            <span className="rounded-md border border-steel-700 bg-steel-900 px-2 py-1">
+              Stock hasta {stockLimit}
+            </span>
+          )}
+
+          {sortMode !== "az" && (
+            <span className="rounded-md border border-steel-700 bg-steel-900 px-2 py-1">
+              Orden:{" "}
+              {sortMode === "za"
+                ? "Nombre Z-A"
+                : sortMode === "stock_desc"
+                  ? "Mayor cantidad"
+                  : "Menor cantidad"}
+            </span>
+          )}
+
+          <Button
+            variant="ghost"
+            className="ml-auto"
+            onClick={() => {
+              setMaxStock("");
+              setSelectedCategory("todos");
+              setSortMode("az");
+              setPage(1);
+            }}
+          >
+            Limpiar
+          </Button>
+        </div>
+      )}
+
+      {filtersOpen && (
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 p-4"
+          onMouseDown={() => setFiltersOpen(false)}
+        >
+          <div
+            className="max-h-[88vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-steel-700 bg-white p-5 shadow-2xl"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="mb-5 flex items-start justify-between gap-3 border-b border-slate-200 pb-3">
+              <div>
+                <h3 className="text-xl font-bold text-slate-900">Filtros de inventario</h3>
+                <p className="text-sm text-slate-500">
+                  Filtra por categoría, cantidad disponible y orden de visualización.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setFiltersOpen(false)}
+                className="grid h-9 w-9 place-items-center rounded-full text-slate-600 transition hover:bg-slate-100 hover:text-slate-950"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="grid gap-5">
+              <div className="grid gap-2">
+                <p className="text-sm font-semibold text-slate-900">Filtrar por categoría</p>
+
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant={selectedCategory === "todos" ? "primary" : "secondary"}
+                    onClick={() => {
+                      setSelectedCategory("todos");
+                      setPage(1);
+                    }}
+                  >
+                    <Boxes size={16} />
+                    Todos
+                  </Button>
+
+                  {categoryOptions.map((category) => (
+                    <Button
+                      key={category}
+                      variant={selectedCategory === category ? "primary" : "secondary"}
+                      onClick={() => {
+                        setSelectedCategory(category);
+                        setPage(1);
+                      }}
+                    >
+                      {category}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid gap-2">
+                <p className="text-sm font-semibold text-slate-900">Ordenar resultados</p>
+
+                <select
+                  className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-yellow-400"
+                  value={sortMode}
+                  onChange={(e) => {
+                    setSortMode(e.target.value);
+                    setPage(1);
+                  }}
+                >
+                  <option value="az">Nombre A-Z</option>
+                  <option value="za">Nombre Z-A</option>
+                  <option value="stock_desc">Mayor cantidad primero</option>
+                  <option value="stock_asc">Menor cantidad primero</option>
+                </select>
+              </div>
+
+              <div className="grid gap-2">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-semibold text-slate-900">Filtrar por cantidad disponible</p>
+
+                  <span className="rounded-md border border-slate-300 bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-700">
+                    Hasta {maxStock === "" ? highestStock : stockLimit} unidades
+                  </span>
+                </div>
+
+                <input
+                  type="range"
+                  min="0"
+                  max={highestStock}
+                  value={maxStock === "" ? highestStock : stockLimit}
+                  onChange={(e) => {
+                    setMaxStock(e.target.value);
+                    setPage(1);
+                  }}
+                  className="w-full accent-yellow-400"
+                />
+
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-slate-500">0</span>
+
+                  <input
+                    className="w-32 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-yellow-400"
+                    type="number"
+                    min="0"
+                    max={highestStock}
+                    value={maxStock}
+                    onChange={(e) => {
+                      setMaxStock(e.target.value);
+                      setPage(1);
+                    }}
+                    placeholder={String(highestStock)}
+                  />
+
+                  <span className="text-xs text-slate-500">{highestStock}</span>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+                Mostrando{" "}
+                <strong className="text-slate-950">
+                  {rows.length}
+                </strong>{" "}
+                material(es) según los filtros aplicados.
+              </div>
+
+              <div className="flex flex-wrap justify-end gap-2 border-t border-slate-200 pt-4">
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setMaxStock("");
+                    setSelectedCategory("todos");
+                    setSortMode("az");
+                    setPage(1);
+                  }}
+                >
+                  Limpiar filtros
+                </Button>
+
+                <Button onClick={() => setFiltersOpen(false)}>
+                  Aplicar filtros
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <DataTable
+        rows={tableRows}
+        columns={tableColumns}
+        actions={(row) => (
+          <div className="flex justify-end gap-2">
+            {hasPersonProfile && (
+              <Button variant="ghost" className="px-2" onClick={() => setProfile(row)}>
+                <UserRound size={16} />
+              </Button>
+            )}
+
+            <Button variant="ghost" className="px-2" onClick={() => setEditing(row)}>
+              <Edit3 size={16} />
+            </Button>
+
+            <Button variant="ghost" className="px-2 text-red-300" onClick={() => setDeleting(row)}>
+              <Trash2 size={16} />
+            </Button>
+          </div>
+        )}
+      />
+
       <Pager page={page} pages={pages} setPage={setPage} />
-      {profile && <PersonProfileModal person={profile} type={collection === "students" ? "student" : "teacher"} onClose={() => setProfile(null)} />}
-      {editing && <EditEntityModal collection={collection} config={config} initial={editing} onClose={() => setEditing(null)} onSave={save} />}
-      {deleting && <ConfirmModal title="Confirmar eliminación" body={`Se eliminará "${deleting.name}". Esta acción no se puede deshacer.`} onCancel={() => setDeleting(null)} onConfirm={() => { dispatch({ type: "DELETE_ENTITY", collection, id: deleting.id }); notify("Registro eliminado"); setDeleting(null); }} />}
+
+      {editing && (
+        <EditEntityModal
+          collection={collection}
+          config={config}
+          initial={editing}
+          onClose={() => setEditing(null)}
+          onSave={save}
+         />
+      )}
+
+      {deleting && (
+        <ConfirmModal
+          title={`Eliminar ${config.singular}`}
+          body={`¿Seguro que deseas eliminar "${deleting.name || deleting.code || "este registro"}"?`}
+          onCancel={() => setDeleting(null)}
+          onConfirm={() => {
+            dispatch({
+              type: "DELETE_ENTITY",
+              collection,
+              id: deleting.id
+            });
+
+            notify("Registro eliminado");
+            setDeleting(null);
+          }}
+        />
+      )}
+
+      {profile && (
+        <PersonProfileModal
+          person={profile}
+          type={collection === "students" ? "student" : "teacher"}
+          onClose={() => setProfile(null)}
+        />
+      )}
     </div>
   );
 }
