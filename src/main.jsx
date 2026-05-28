@@ -2221,7 +2221,6 @@ function CrudTable({ collection, config }) {
   const [selectedCategory, setSelectedCategory] = useState("todos");
   const [maxStock, setMaxStock] = useState("");
   const [sortMode, setSortMode] = useState("az");
-  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const hasPersonProfile = collection === "students" || collection === "teachers";
   const isMaterials = collection === "materials";
@@ -2292,6 +2291,67 @@ function CrudTable({ collection, config }) {
     (maxStock !== "" ? 1 : 0) +
     (sortMode !== "az" ? 1 : 0);
 
+  const normalizeInventoryCategories = () => {
+    const normalizeCategory = (value = "") => {
+      const clean = String(value)
+        .trim()
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "");
+
+      if (
+        clean.includes("fungible") ||
+        clean === "fun" ||
+        clean === "fungibles"
+      ) {
+        return "Material Fungible";
+      }
+
+      if (
+        clean.includes("herramienta") ||
+        clean.includes("herramientas") ||
+        clean === "her"
+      ) {
+        return "Herramientas";
+      }
+
+      if (
+        clean.includes("instrument") ||
+        clean.includes("intrument") ||
+        clean.includes("instrum")
+      ) {
+        return "Instrumentación";
+      }
+
+      if (
+        clean.includes("maqueta") ||
+        clean.includes("didactica") ||
+        clean.includes("didacticas")
+      ) {
+        return "Maquetas Didácticas";
+      }
+
+      return value || "Sin categoría";
+    };
+
+    const updatedMaterials = (state.materials || []).map((material) => ({
+      ...material,
+      category: normalizeCategory(material.category)
+    }));
+
+    dispatch({
+      type: "HYDRATE_STATE",
+      state: {
+        ...state,
+        materials: updatedMaterials
+      }
+    });
+
+    notify("Categorías normalizadas correctamente");
+    setSelectedCategory("todos");
+    setPage(1);
+  };
+
   const save = (row) => {
     const finalRow = row.code ? row : { ...row, code: generateEntityCode(state, collection, row) };
 
@@ -2307,146 +2367,71 @@ function CrudTable({ collection, config }) {
   };
 
   return (
-    <div className="panel">
-      <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div className="relative max-w-md flex-1">
-          <Search className="pointer-events-none absolute left-3 top-2.5 text-slate-500" size={18} />
-
-          <input
-            className={`${inputClass} pl-10`}
-            placeholder={`Buscar en ${config.title.toLowerCase()}`}
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              setPage(1);
-            }}
-          />
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          {isMaterials && (
-            <Button variant="secondary" onClick={() => setFiltersOpen(true)}>
-              <Boxes size={16} />
-              Filtros
-              {activeFiltersCount > 0 && (
-                <span className="ml-1 grid h-5 min-w-5 place-items-center rounded-full bg-safety-500 px-1 text-xs font-bold text-steel-950">
-                  {activeFiltersCount}
-                </span>
-              )}
-            </Button>
-          )}
-
-          <Button onClick={() => setEditing({})}>
-            <Plus size={16} />
-            Agregar
-          </Button>
-        </div>
-      </div>
-
-      {isMaterials && activeFiltersCount > 0 && (
-        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-steel-700 bg-steel-850 p-3 text-sm text-slate-300">
-          <span className="font-semibold text-white">Filtros activos:</span>
-
-          {selectedCategory !== "todos" && (
-            <span className="rounded-md border border-steel-700 bg-steel-900 px-2 py-1">
-              Categoría: {selectedCategory}
-            </span>
-          )}
-
-          {maxStock !== "" && (
-            <span className="rounded-md border border-steel-700 bg-steel-900 px-2 py-1">
-              Stock hasta {stockLimit}
-            </span>
-          )}
-
-          {sortMode !== "az" && (
-            <span className="rounded-md border border-steel-700 bg-steel-900 px-2 py-1">
-              Orden:{" "}
-              {sortMode === "za"
-                ? "Nombre Z-A"
-                : sortMode === "stock_desc"
-                  ? "Mayor cantidad"
-                  : "Menor cantidad"}
-            </span>
-          )}
-
-          <Button
-            variant="ghost"
-            className="ml-auto"
-            onClick={() => {
-              setMaxStock("");
-              setSelectedCategory("todos");
-              setSortMode("az");
-              setPage(1);
-            }}
-          >
-            Limpiar
-          </Button>
-        </div>
-      )}
-
-      {filtersOpen && (
-        <div
-          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 p-4"
-          onMouseDown={() => setFiltersOpen(false)}
-        >
-          <div
-            className="max-h-[88vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-steel-700 bg-white p-5 shadow-2xl"
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            <div className="mb-5 flex items-start justify-between gap-3 border-b border-slate-200 pb-3">
+    <div className="grid items-start gap-4 lg:grid-cols-[260px_1fr]">
+      {isMaterials && (
+        <aside className="self-start lg:sticky lg:top-6">
+          <div className="panel">
+            <div className="mb-4 flex items-center justify-between gap-2">
               <div>
-                <h3 className="text-xl font-bold text-slate-900">Filtros de inventario</h3>
-                <p className="text-sm text-slate-500">
-                  Filtra por categoría, cantidad disponible y orden de visualización.
+                <h3 className="text-base font-bold text-slate-950">Filtros</h3>
+                <p className="text-xs text-slate-500">
+                  Filtra el inventario en tiempo real.
                 </p>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setFiltersOpen(false)}
-                className="grid h-9 w-9 place-items-center rounded-full text-slate-600 transition hover:bg-slate-100 hover:text-slate-950"
-              >
-                <X size={20} />
-              </button>
+              {activeFiltersCount > 0 && (
+                <span className="grid h-6 min-w-6 place-items-center rounded-full bg-safety-500 px-2 text-xs font-bold text-steel-950">
+                  {activeFiltersCount}
+                </span>
+              )}
             </div>
 
             <div className="grid gap-5">
               <div className="grid gap-2">
-                <p className="text-sm font-semibold text-slate-900">Filtrar por categoría</p>
+                <p className="text-sm font-semibold text-slate-900">Categoría</p>
 
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    variant={selectedCategory === "todos" ? "primary" : "secondary"}
+                <div className="grid gap-2">
+                  <button
+                    type="button"
                     onClick={() => {
                       setSelectedCategory("todos");
                       setPage(1);
                     }}
+                    className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition ${
+                      selectedCategory === "todos"
+                        ? "border-safety-500 bg-safety-500 text-steel-950"
+                        : "border-slate-200 bg-white text-slate-700 hover:border-safety-500 hover:bg-yellow-50"
+                    }`}
                   >
                     <Boxes size={16} />
                     Todos
-                  </Button>
+                  </button>
 
                   {categoryOptions.map((category) => (
-                    <Button
+                    <button
                       key={category}
-                      variant={selectedCategory === category ? "primary" : "secondary"}
+                      type="button"
                       onClick={() => {
                         setSelectedCategory(category);
                         setPage(1);
                       }}
+                      className={`w-full rounded-lg border px-3 py-2 text-left text-sm font-semibold transition ${
+                        selectedCategory === category
+                          ? "border-safety-500 bg-safety-500 text-steel-950"
+                          : "border-slate-200 bg-white text-slate-700 hover:border-safety-500 hover:bg-yellow-50"
+                      }`}
                     >
                       {category}
-                    </Button>
+                    </button>
                   ))}
                 </div>
               </div>
 
               <div className="grid gap-2">
-                <p className="text-sm font-semibold text-slate-900">Ordenar resultados</p>
+                <p className="text-sm font-semibold text-slate-900">Ordenar por</p>
 
                 <select
-                  className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-yellow-400"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-yellow-400"
                   value={sortMode}
                   onChange={(e) => {
                     setSortMode(e.target.value);
@@ -2455,17 +2440,17 @@ function CrudTable({ collection, config }) {
                 >
                   <option value="az">Nombre A-Z</option>
                   <option value="za">Nombre Z-A</option>
-                  <option value="stock_desc">Mayor cantidad primero</option>
-                  <option value="stock_asc">Menor cantidad primero</option>
+                  <option value="stock_desc">Mayor cantidad</option>
+                  <option value="stock_asc">Menor cantidad</option>
                 </select>
               </div>
 
               <div className="grid gap-2">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-semibold text-slate-900">Filtrar por cantidad disponible</p>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-slate-900">Cantidad</p>
 
-                  <span className="rounded-md border border-slate-300 bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-700">
-                    Hasta {maxStock === "" ? highestStock : stockLimit} unidades
+                  <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-bold text-slate-700">
+                    ≤ {maxStock === "" ? highestStock : stockLimit}
                   </span>
                 </div>
 
@@ -2481,11 +2466,11 @@ function CrudTable({ collection, config }) {
                   className="w-full accent-yellow-400"
                 />
 
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
                   <span className="text-xs text-slate-500">0</span>
 
                   <input
-                    className="w-32 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-yellow-400"
+                    className="w-24 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-yellow-400"
                     type="number"
                     min="0"
                     max={highestStock}
@@ -2502,14 +2487,10 @@ function CrudTable({ collection, config }) {
               </div>
 
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
-                Mostrando{" "}
-                <strong className="text-slate-950">
-                  {rows.length}
-                </strong>{" "}
-                material(es) según los filtros aplicados.
+                Mostrando <strong className="text-slate-950">{rows.length}</strong> material(es).
               </div>
 
-              <div className="flex flex-wrap justify-end gap-2 border-t border-slate-200 pt-4">
+              <div className="grid gap-2">
                 <Button
                   variant="secondary"
                   onClick={() => {
@@ -2522,78 +2503,101 @@ function CrudTable({ collection, config }) {
                   Limpiar filtros
                 </Button>
 
-                <Button onClick={() => setFiltersOpen(false)}>
-                  Aplicar filtros
+                <Button variant="ghost" onClick={normalizeInventoryCategories}>
+                  <RotateCcw size={16} />
+                  Normalizar categorías
                 </Button>
               </div>
             </div>
           </div>
-        </div>
+        </aside>
       )}
 
-      <DataTable
-        rows={tableRows}
-        columns={tableColumns}
-        actions={(row) => (
-          <div className="flex justify-end gap-2">
-            {hasPersonProfile && (
-              <Button variant="ghost" className="px-2" onClick={() => setProfile(row)}>
-                <UserRound size={16} />
-              </Button>
-            )}
+      <div className="panel">
+        <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="relative max-w-md flex-1">
+            <Search className="pointer-events-none absolute left-3 top-2.5 text-slate-500" size={18} />
 
-            <Button variant="ghost" className="px-2" onClick={() => setEditing(row)}>
-              <Edit3 size={16} />
-            </Button>
-
-            <Button variant="ghost" className="px-2 text-red-300" onClick={() => setDeleting(row)}>
-              <Trash2 size={16} />
-            </Button>
+            <input
+              className={`${inputClass} pl-10`}
+              placeholder={`Buscar en ${config.title.toLowerCase()}`}
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setPage(1);
+              }}
+            />
           </div>
+
+          <Button onClick={() => setEditing({})}>
+            <Plus size={16} />
+            Agregar
+          </Button>
+        </div>
+
+        <DataTable
+          rows={tableRows}
+          columns={tableColumns}
+          actions={(row) => (
+            <div className="flex justify-end gap-2">
+              {hasPersonProfile && (
+                <Button variant="ghost" className="px-2" onClick={() => setProfile(row)}>
+                  <UserRound size={16} />
+                </Button>
+              )}
+
+              <Button variant="ghost" className="px-2" onClick={() => setEditing(row)}>
+                <Edit3 size={16} />
+              </Button>
+
+              <Button variant="ghost" className="px-2 text-red-300" onClick={() => setDeleting(row)}>
+                <Trash2 size={16} />
+              </Button>
+            </div>
+          )}
+        />
+
+        <Pager page={page} pages={pages} setPage={setPage} />
+
+        {editing && (
+          <EditEntityModal
+            collection={collection}
+            config={config}
+            initial={editing}
+            onClose={() => setEditing(null)}
+            onSave={save}
+          />
         )}
-      />
 
-      <Pager page={page} pages={pages} setPage={setPage} />
+        {deleting && (
+          <ConfirmModal
+            title={`Eliminar ${config.singular}`}
+            body={`¿Seguro que deseas eliminar "${deleting.name || deleting.code || "este registro"}"?`}
+            onCancel={() => setDeleting(null)}
+            onConfirm={() => {
+              dispatch({
+                type: "DELETE_ENTITY",
+                collection,
+                id: deleting.id
+              });
 
-      {editing && (
-        <EditEntityModal
-          collection={collection}
-          config={config}
-          initial={editing}
-          onClose={() => setEditing(null)}
-          onSave={save}
-         />
-      )}
+              notify("Registro eliminado");
+              setDeleting(null);
+            }}
+          />
+        )}
 
-      {deleting && (
-        <ConfirmModal
-          title={`Eliminar ${config.singular}`}
-          body={`¿Seguro que deseas eliminar "${deleting.name || deleting.code || "este registro"}"?`}
-          onCancel={() => setDeleting(null)}
-          onConfirm={() => {
-            dispatch({
-              type: "DELETE_ENTITY",
-              collection,
-              id: deleting.id
-            });
-
-            notify("Registro eliminado");
-            setDeleting(null);
-          }}
-        />
-      )}
-
-      {profile && (
-        <PersonProfileModal
-          person={profile}
-          type={collection === "students" ? "student" : "teacher"}
-          onClose={() => setProfile(null)}
-        />
-      )}
+        {profile && (
+          <PersonProfileModal
+            person={profile}
+            type={collection === "students" ? "student" : "teacher"}
+            onClose={() => setProfile(null)}
+          />
+        )}
+      </div>
     </div>
   );
 }
-
 function PersonProfileModal({ person, type, onClose }) {
   const { state, notify } = useApp();
   const [sendingPendingEmail, setSendingPendingEmail] = useState(false);
