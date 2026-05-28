@@ -3477,12 +3477,12 @@ function PersonHistory() {
           </div>
         </Field>
         {query && !selected && (
-          <div className="absolute z-20 mt-2 max-h-80 w-full overflow-auto rounded-md border border-steel-700 bg-steel-900 shadow-xl">
-            {filtered.length === 0 && <p className="px-3 py-3 text-sm text-slate-400">Sin resultados</p>}
+          <div className="absolute left-0 right-0 top-full z-[99999] mt-2 max-h-80 w-full overflow-auto rounded-xl border border-slate-200 bg-white p-2 shadow-2xl">
+            {filtered.length === 0 && <p className="px-3 py-3 text-sm text-slate-500">Sin resultados</p>}
             {filtered.map((person) => (
-              <button key={`${person.requesterType}-${person.id}`} type="button" className="flex w-full items-center justify-between gap-3 border-b border-steel-800 px-3 py-3 text-left hover:bg-steel-800" onClick={() => { setSelected(person); setQuery(person.name); }}>
+              <button key={`${person.requesterType}-${person.id}`} type="button" className="flex w-full items-center justify-between gap-3 rounded-lg border-b border-slate-100 px-3 py-3 text-left text-slate-800 hover:bg-yellow-50" onClick={() => { setSelected(person); setQuery(person.name); }}>
                 <span>
-                  <span className="block text-sm font-semibold text-white">{person.name}</span>
+                  <span className="block text-sm font-semibold text-slate-950">{person.name}</span>
                   <span className="block text-xs text-slate-400">{person.role} · {person.group || "Sin grupo"} · {person.email || "Sin email"}</span>
                 </span>
                 <Badge tone={getBlockReason(state.loans, person.requesterType, person.id) ? "red" : "green"}>{getBlockReason(state.loans, person.requesterType, person.id) ? "Bloqueado" : "Habilitado"}</Badge>
