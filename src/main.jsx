@@ -206,7 +206,17 @@ const overdueDays = (dueDate) => Math.max(0, Math.ceil((new Date(today()) - new 
 const isOverdue = (loan) => loan.status === "activo" && loan.expectedReturn < today();
 const personKey = (type, id) => `${type}:${id}`;
 const isCriticalStockItem = (item) => {
-  return item?.criticalEnabled !== false && Number(item.stock || 0) < Number(item.minStock || 0);
+  const category = normalizeHeader(item?.category || "");
+
+  const isFungible =
+    category.includes("fungible") ||
+    category.includes("material fungible");
+
+  return (
+    isFungible &&
+    item?.criticalEnabled !== false &&
+    Number(item.stock || 0) < Number(item.minStock || 0)
+  );
 };
 const isFungibleMaterial = (item) => {
   return item?.type === "material" && normalizeHeader(item.category || "").includes("fungible");
