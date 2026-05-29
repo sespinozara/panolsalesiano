@@ -205,7 +205,9 @@ const formatDate = (date) => new Intl.DateTimeFormat("es-CL").format(new Date(`$
 const overdueDays = (dueDate) => Math.max(0, Math.ceil((new Date(today()) - new Date(dueDate)) / 86400000));
 const isOverdue = (loan) => loan.status === "activo" && loan.expectedReturn < today();
 const personKey = (type, id) => `${type}:${id}`;
-const isFungibleMaterial = (item) => item?.type === "material" && normalizeHeader(item.category || "").includes("fungible");
+const isCriticalStockItem = (item) => {
+  return item?.criticalEnabled !== false && Number(item.stock || 0) < Number(item.minStock || 0);
+};
 const getBlockReason = (loans, requesterType, requesterId) => {
   if (requesterType === "teacher") return "";
   const pending = loans.find((loan) => loan.status === "activo" && personKey(loan.requesterType, loan.requesterId) === personKey(requesterType, requesterId) && (loan.partialReturn || isOverdue(loan)));
@@ -1025,7 +1027,7 @@ function NotificationsBell({ notifications, onMarkRead }) {
 }
 
 function GlobalSearch({ allowedSections = [], onSelect }) {
-  const { state } = useApp();
+  const { state, dispatch, notify } = useApp();
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const allowed = useMemo(() => new Set(allowedSections), [allowedSections]);
@@ -1646,7 +1648,7 @@ function Dashboard({ openLoans, openKeys }) {
   const [movementDetail, setMovementDetail] = useState(null);
   const activeLoans = state.loans.filter((l) => l.status === "activo");
   const overdue = activeLoans.filter(isOverdue);
-  const lowStock = state.materials.filter((m) => Number(m.stock) < Math.max(Number(m.minStock), Number(state.settings.criticalThreshold)));
+  const lowStock = state.materials.filter(isCriticalStockItem);
   const dueSoon = activeLoans.filter((loan) => {
     const days = Math.ceil((new Date(loan.expectedReturn) - new Date(today())) / 86400000);
     return days >= 0 && days <= 1;
@@ -1880,7 +1882,7 @@ function buildAdminAiContext(state) {
     requests: (state.requests || []).slice(0, 50),
     recentLoans: state.loans.slice(0, 80),
     tools: state.tools,
-    lowStock: state.materials.filter((item) => Number(item.stock) < Number(item.minStock)).slice(0, 60)
+    lowStock: state.materials.filter(isCriticalStockItem).slice(0, 60)
   };
 }
 
@@ -1948,7 +1950,7 @@ function buildAdminAlerts(state) {
   const overdue = activeLoans.filter(isOverdue);
   const dueSoon = activeLoans.filter((loan) => !isOverdue(loan) && loan.expectedReturn <= dueLimit);
   const zeroStock = state.materials.filter((item) => Number(item.stock || 0) <= 0);
-  const lowStock = state.materials.filter((item) => Number(item.stock || 0) > 0 && Number(item.stock || 0) < Number(item.minStock || state.settings.criticalThreshold || 0));
+  const lowStock = state.materials.filter(isCriticalStockItem);
   const pendingRequests = (state.requests || []).filter((request) => request.status === "pendiente");
   const preparingRequests = (state.requests || []).filter((request) => request.status === "en preparación");
   const unreadMessages = (state.messages || []).filter((msg) => msg.from === "docente" && !msg.adminRead);
@@ -4764,49 +4766,329 @@ function isInvoiceFooter(value) {
 }
 
 function Reports() {
-  const { state } = useApp();
+  const { state, dispatch, notify } = useApp();
   const [report, setReport] = useState("inventory");
   const [builderOpen, setBuilderOpen] = useState(false);
   const [printReport, setPrintReport] = useState(null);
-  const categoryOptions = ["Material Fungible", "Herramientas", "Instrumentacion", "Maquetas Didacticas", ...new Set(state.materials.map((m) => m.category).filter(Boolean))].filter((value, index, arr) => arr.indexOf(value) === index);
+  const [lowCategory, setLowCategory] = useState("todas");
+  const [lowMode, setLowMode] = useState("controlados");
+
+  const categoryOptions = [
+    "Material Fungible",
+    "Herramientas",
+    "Instrumentación",
+    "Maquetas Didácticas",
+    ...new Set((state.materials || []).map((m) => m.category).filter(Boolean))
+  ].filter((value, index, arr) => arr.indexOf(value) === index);
+
   const [selectedCategories, setSelectedCategories] = useState(categoryOptions);
-  const lowStock = state.materials.filter((m) => Number(m.stock) < Number(m.minStock));
+
+  const lowStockAll = (state.materials || []).filter((m) =>
+    Number(m.stock || 0) < Number(m.minStock || 0)
+  );
+
+  const lowStock = lowStockAll.filter((m) => {
+    const matchesCategory =
+      lowCategory === "todas" || (m.category || "Sin categoría") === lowCategory;
+
+    const matchesMode =
+      lowMode === "todos" ||
+      (lowMode === "controlados" && m.criticalEnabled !== false) ||
+      (lowMode === "no_controlados" && m.criticalEnabled === false);
+
+    return matchesCategory && matchesMode;
+  });
+
   const inventory = getReportInventoryRows(state, selectedCategories);
-  const loans = state.loans.flatMap((l) => l.items.map((i) => ({ folio: displayFolio(l, "PRE"), fecha: l.createdAt, solicitante: l.requesterName, item: i.name, cantidad: i.qty, estado: isOverdue(l) ? "vencido" : l.status })));
-  const data = report === "inventory" ? inventory : report === "loans" ? loans : lowStock;
-  const columns = report === "inventory" ? [["tipo", "Tipo"], ["nombre", "Nombre"], ["codigo", "Código"], ["stock", "Stock"], ["estado", "Estado"], ["ubicacion", "Ubicación"]] : report === "loans" ? [["folio", "Folio"], ["fecha", "Fecha"], ["solicitante", "Solicitante"], ["item", "Ítem"], ["cantidad", "Cantidad"], ["estado", "Estado"]] : [["name", "Material"], ["code", "Código"], ["stock", "Stock"], ["minStock", "Mínimo"], ["location", "Ubicación"]];
-  const toggleCategory = (category) => setSelectedCategories(selectedCategories.includes(category) ? selectedCategories.filter((item) => item !== category) : [...selectedCategories, category]);
+
+  const loans = (state.loans || []).flatMap((l) =>
+    (l.items || []).map((i) => ({
+      folio: displayFolio(l, "PRE"),
+      fecha: l.createdAt,
+      solicitante: l.requesterName,
+      item: i.name,
+      cantidad: i.qty,
+      estado: isOverdue(l) ? "vencido" : l.status
+    }))
+  );
+
+  const data =
+    report === "inventory"
+      ? inventory
+      : report === "loans"
+        ? loans
+        : lowStock;
+
+  const columns =
+    report === "inventory"
+      ? [
+          ["tipo", "Tipo"],
+          ["nombre", "Nombre"],
+          ["codigo", "Código"],
+          ["stock", "Stock"],
+          ["estado", "Estado"],
+          ["ubicacion", "Ubicación"]
+        ]
+      : report === "loans"
+        ? [
+            ["folio", "Folio"],
+            ["fecha", "Fecha"],
+            ["solicitante", "Solicitante"],
+            ["item", "Ítem"],
+            ["cantidad", "Cantidad"],
+            ["estado", "Estado"]
+          ]
+        : [
+            ["name", "Material"],
+            ["code", "Código"],
+            ["category", "Categoría"],
+            ["stock", "Stock"],
+            ["minStock", "Mínimo"],
+            ["location", "Ubicación"]
+          ];
+
+  const toggleCategory = (category) =>
+    setSelectedCategories(
+      selectedCategories.includes(category)
+        ? selectedCategories.filter((item) => item !== category)
+        : [...selectedCategories, category]
+    );
+
   return (
     <div className="grid gap-5">
       <div className="panel print:shadow-none">
         <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between print:hidden">
           <div className="flex flex-wrap gap-2">
-            <Button variant={report === "inventory" ? "primary" : "secondary"} onClick={() => setReport("inventory")}><Boxes size={16} />Inventario</Button>
-            <Button variant={report === "loans" ? "primary" : "secondary"} onClick={() => setReport("loans")}><ClipboardList size={16} />Préstamos</Button>
-            <Button variant={report === "low" ? "primary" : "secondary"} onClick={() => setReport("low")}><AlertTriangle size={16} />Stock bajo</Button>
+            <Button
+              variant={report === "inventory" ? "primary" : "secondary"}
+              onClick={() => setReport("inventory")}
+            >
+              <Boxes size={16} />
+              Inventario
+            </Button>
+
+            <Button
+              variant={report === "loans" ? "primary" : "secondary"}
+              onClick={() => setReport("loans")}
+            >
+              <ClipboardList size={16} />
+              Préstamos
+            </Button>
+
+            <Button
+              variant={report === "low" ? "primary" : "secondary"}
+              onClick={() => setReport("low")}
+            >
+              <AlertTriangle size={16} />
+              Stock bajo
+            </Button>
           </div>
-          <div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => setBuilderOpen(true)}><FileCheck size={16} />Generar informe</Button><Button variant="secondary" onClick={() => exportCSV(data, columns, `reporte-${report}.csv`)}><Download size={16} />Exportar CSV</Button><Button variant="secondary" onClick={() => setPrintReport({ sections: { inventory: true }, categories: selectedCategories })}><Printer size={16} />Vista impresión</Button></div>
+
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={() => setBuilderOpen(true)}>
+              <FileCheck size={16} />
+              Generar informe
+            </Button>
+
+            <Button
+              variant="secondary"
+              onClick={() => exportCSV(data, columns, `reporte-${report}.csv`)}
+            >
+              <Download size={16} />
+              Exportar CSV
+            </Button>
+
+            <Button
+              variant="secondary"
+              onClick={() =>
+                setPrintReport({
+                  sections: { inventory: true },
+                  categories: selectedCategories
+                })
+              }
+            >
+              <Printer size={16} />
+              Vista impresión
+            </Button>
+          </div>
         </div>
+
         {report === "inventory" && (
           <div className="mb-5 rounded-md border border-steel-700 bg-steel-850 p-4 print:hidden">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <h3 className="font-bold text-white">Categorías del inventario completo</h3>
-              <div className="flex gap-2"><Button variant="secondary" onClick={() => setSelectedCategories(categoryOptions)}>Todas</Button><Button variant="secondary" onClick={() => setSelectedCategories([])}>Limpiar</Button></div>
+
+              <div className="flex gap-2">
+                <Button variant="secondary" onClick={() => setSelectedCategories(categoryOptions)}>
+                  Todas
+                </Button>
+
+                <Button variant="secondary" onClick={() => setSelectedCategories([])}>
+                  Limpiar
+                </Button>
+              </div>
             </div>
+
             <div className="flex flex-wrap gap-2">
-              {categoryOptions.map((category) => <label key={category} className="inline-flex items-center gap-2 rounded-md border border-steel-700 px-3 py-2 text-sm"><input type="checkbox" checked={selectedCategories.includes(category)} onChange={() => toggleCategory(category)} />{category}</label>)}
+              {categoryOptions.map((category) => (
+                <label
+                  key={category}
+                  className="inline-flex items-center gap-2 rounded-md border border-steel-700 px-3 py-2 text-sm"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedCategories.includes(category)}
+                    onChange={() => toggleCategory(category)}
+                  />
+                  {category}
+                </label>
+              ))}
             </div>
           </div>
         )}
-        <h2 className="mb-4 text-xl font-bold text-white">Reporte: {report === "inventory" ? "Inventario actual" : report === "loans" ? "Préstamos por período" : "Stock bajo"}</h2>
-        <DataTable rows={data} columns={columns} />
+
+        {report === "low" && (
+          <div className="mb-5 grid gap-4 rounded-md border border-steel-700 bg-steel-850 p-4 print:hidden md:grid-cols-3">
+            <Field label="Filtrar por categoría">
+              <select
+                className={inputClass}
+                value={lowCategory}
+                onChange={(e) => setLowCategory(e.target.value)}
+              >
+                <option value="todas">Todas las categorías</option>
+                {categoryOptions.map((category) => (
+                  <option key={category} value={category}>
+                    {category}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            <Field label="Estado de control">
+              <select
+                className={inputClass}
+                value={lowMode}
+                onChange={(e) => setLowMode(e.target.value)}
+              >
+                <option value="controlados">Solo controlados</option>
+                <option value="todos">Todos los bajo stock</option>
+                <option value="no_controlados">No controlados / compra única</option>
+              </select>
+            </Field>
+
+            <div className="rounded-lg border border-steel-700 bg-steel-900 p-3 text-sm text-slate-300">
+              Mostrando{" "}
+              <strong className="text-white">{lowStock.length}</strong> de{" "}
+              <strong className="text-white">{lowStockAll.length}</strong>{" "}
+              elemento(s) bajo mínimo.
+            </div>
+          </div>
+        )}
+
+        <h2 className="mb-4 text-xl font-bold text-white">
+          Reporte:{" "}
+          {report === "inventory"
+            ? "Inventario actual"
+            : report === "loans"
+              ? "Préstamos por período"
+              : "Stock bajo"}
+        </h2>
+
+        <DataTable
+          rows={data}
+          columns={columns}
+          actions={
+            report === "low"
+              ? (row) => (
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      variant="ghost"
+                      className="px-2"
+                      onClick={() => {
+                        setReport("inventory");
+                        setSelectedCategories([row.category || "Material Fungible"]);
+                      }}
+                    >
+                      Ver
+                    </Button>
+
+                    {row.criticalEnabled === false ? (
+                      <Button
+                        variant="ghost"
+                        className="px-2 text-emerald-700"
+                        onClick={() => {
+                          const material = state.materials.find((item) => item.id === row.id);
+                          if (!material) return;
+
+                          dispatch({
+                            type: "UPSERT_ENTITY",
+                            collection: "materials",
+                            prefix: "mat",
+                            row: {
+                              ...material,
+                              criticalEnabled: true
+                            }
+                          });
+
+                          notify("Material reincorporado al stock crítico");
+                        }}
+                      >
+                        Controlar
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        className="px-2 text-amber-700"
+                        onClick={() => {
+                          const material = state.materials.find((item) => item.id === row.id);
+                          if (!material) return;
+
+                          dispatch({
+                            type: "UPSERT_ENTITY",
+                            collection: "materials",
+                            prefix: "mat",
+                            row: {
+                              ...material,
+                              criticalEnabled: false
+                            }
+                          });
+
+                          notify("Material excluido del stock crítico");
+                        }}
+                      >
+                        No controlar
+                      </Button>
+                    )}
+                  </div>
+                )
+              : undefined
+          }
+        />
       </div>
-      {builderOpen && <ReportBuilderModal categories={categoryOptions} selectedCategories={selectedCategories} setSelectedCategories={setSelectedCategories} onClose={() => setBuilderOpen(false)} onGenerate={(sections) => { setPrintReport({ sections, categories: selectedCategories }); setBuilderOpen(false); }} />}
-      {printReport && <PrintableReportModal state={state} report={printReport} onClose={() => setPrintReport(null)} />}
+
+      {builderOpen && (
+        <ReportBuilderModal
+          categories={categoryOptions}
+          selectedCategories={selectedCategories}
+          setSelectedCategories={setSelectedCategories}
+          onClose={() => setBuilderOpen(false)}
+          onGenerate={(sections) => {
+            setPrintReport({ sections, categories: selectedCategories });
+            setBuilderOpen(false);
+          }}
+        />
+      )}
+
+      {printReport && (
+        <PrintableReportModal
+          state={state}
+          report={printReport}
+          onClose={() => setPrintReport(null)}
+        />
+      )}
     </div>
   );
 }
-
 function getReportInventoryRows(state, selectedCategories) {
   const includeTools = selectedCategories.includes("Herramientas");
   const materialRows = state.materials
@@ -4838,7 +5120,7 @@ function ReportBuilderModal({ categories, selectedCategories, setSelectedCategor
 
 function PrintableReportModal({ state, report, onClose }) {
   const inventory = getReportInventoryRows(state, report.categories);
-  const lowStock = state.materials.filter((m) => Number(m.stock) < Number(m.minStock));
+  const lowStock = state.materials.filter((m) => isCriticalStockItem(m));
   const month = new Date().getMonth();
   const monthLoans = state.loans.filter((loan) => new Date(`${loan.createdAt}T12:00:00`).getMonth() === month).flatMap((loan) => loan.items.map((item) => ({ folio: displayFolio(loan, "PRE"), fecha: loan.createdAt, responsable: loan.requesterName, material: item.name, cantidad: item.qty, estado: loan.status })));
   const ranking = Object.values(state.loans.flatMap((loan) => loan.items).reduce((acc, item) => {
