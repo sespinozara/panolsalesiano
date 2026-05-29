@@ -218,9 +218,20 @@ const isCriticalStockItem = (item) => {
     Number(item.stock || 0) < Number(item.minStock || 0)
   );
 };
+
+const isFungibleStockCategory = (item) => {
+  const category = normalizeHeader(item?.category || "");
+
+  return (
+    category.includes("fungible") ||
+    category.includes("material fungible")
+  );
+};
+
 const isFungibleMaterial = (item) => {
   return item?.type === "material" && normalizeHeader(item.category || "").includes("fungible");
 };
+
 const getBlockReason = (loans, requesterType, requesterId) => {
   if (requesterType === "teacher") return "";
   const pending = loans.find((loan) => loan.status === "activo" && personKey(loan.requesterType, loan.requesterId) === personKey(requesterType, requesterId) && (loan.partialReturn || isOverdue(loan)));
@@ -1666,17 +1677,18 @@ function Dashboard({ openLoans, openKeys }) {
   const activeLoans = state.loans.filter((l) => l.status === "activo");
   const overdue = activeLoans.filter(isOverdue);
 
-  const lowStockAll = state.materials.filter((m) =>
-    Number(m.stock || 0) < Number(m.minStock || 0)
-  );
+const lowStockAll = state.materials.filter((m) =>
+  isFungibleStockCategory(m) &&
+  Number(m.stock || 0) < Number(m.minStock || 0)
+);
 
-  const lowStockCategoryOptions = [
-    ...new Set(
-      (state.materials || [])
-        .map((m) => m.category || "Sin categoría")
-        .filter(Boolean)
-    )
-  ].sort();
+const lowStockCategoryOptions = [
+  ...new Set(
+    lowStockAll
+      .map((m) => m.category || "Sin categoría")
+      .filter(Boolean)
+  )
+].sort();
 
   const lowStock = lowStockAll.filter((m) => {
     const matchesCategory =
@@ -1696,9 +1708,19 @@ function Dashboard({ openLoans, openKeys }) {
     return days >= 0 && days <= 1;
   });
 
-  const zeroStock = state.materials.filter(
-    (m) => m.criticalEnabled !== false && Number(m.stock || 0) <= 0
+  const zeroStock = state.materials.filter((m) => {
+  const category = normalizeHeader(m?.category || "");
+
+  const isFungible =
+    category.includes("fungible") ||
+    category.includes("material fungible");
+
+  return (
+    isFungible &&
+    m.criticalEnabled !== false &&
+    Number(m.stock || 0) <= 0
   );
+});
 
   const unavailableTools = state.tools.filter((tool) =>
     ["en reparación", "dañado", "perdido", "dado de baja"].includes(tool.status)
@@ -2392,7 +2414,13 @@ function buildAdminAlerts(state) {
   const activeLoans = state.loans.filter((loan) => loan.status === "activo");
   const overdue = activeLoans.filter(isOverdue);
   const dueSoon = activeLoans.filter((loan) => !isOverdue(loan) && loan.expectedReturn <= dueLimit);
-  const zeroStock = state.materials.filter((item) => Number(item.stock || 0) <= 0);
+  const zeroStock = state.materials.filter(
+    (item) =>
+      isFungibleStockCategory(item) &&
+      item.criticalEnabled !== false &&
+      Number(item.stock || 0) <= 0
+  );
+
   const lowStock = state.materials.filter(isCriticalStockItem);
   const pendingRequests = (state.requests || []).filter((request) => request.status === "pendiente");
   const preparingRequests = (state.requests || []).filter((request) => request.status === "en preparación");
@@ -5227,6 +5255,7 @@ function Reports() {
   const [selectedCategories, setSelectedCategories] = useState(categoryOptions);
 
   const lowStockAll = (state.materials || []).filter((m) =>
+    isFungibleStockCategory(m) &&
     Number(m.stock || 0) < Number(m.minStock || 0)
   );
 
