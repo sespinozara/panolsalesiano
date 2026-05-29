@@ -208,6 +208,9 @@ const personKey = (type, id) => `${type}:${id}`;
 const isCriticalStockItem = (item) => {
   return item?.criticalEnabled !== false && Number(item.stock || 0) < Number(item.minStock || 0);
 };
+const isFungibleMaterial = (item) => {
+  return item?.type === "material" && normalizeHeader(item.category || "").includes("fungible");
+};
 const getBlockReason = (loans, requesterType, requesterId) => {
   if (requesterType === "teacher") return "";
   const pending = loans.find((loan) => loan.status === "activo" && personKey(loan.requesterType, loan.requesterId) === personKey(requesterType, requesterId) && (loan.partialReturn || isOverdue(loan)));
