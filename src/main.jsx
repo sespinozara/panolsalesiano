@@ -1646,104 +1646,382 @@ function AdminAlertsCenter({ setSection }) {
 }
 
 function Dashboard({ openLoans, openKeys }) {
-  const { state } = useApp();
+  const { state, dispatch, notify } = useApp();
   const [detail, setDetail] = useState(null);
   const [movementDetail, setMovementDetail] = useState(null);
+  const [lowStockCategory, setLowStockCategory] = useState("todas");
+  const [lowStockMode, setLowStockMode] = useState("controlados");
+  const [editingMaterial, setEditingMaterial] = useState(null);
+
   const activeLoans = state.loans.filter((l) => l.status === "activo");
   const overdue = activeLoans.filter(isOverdue);
-  const lowStock = state.materials.filter(isCriticalStockItem);
+
+  const lowStockAll = state.materials.filter((m) =>
+    Number(m.stock || 0) < Number(m.minStock || 0)
+  );
+
+  const lowStockCategoryOptions = [
+    ...new Set(
+      (state.materials || [])
+        .map((m) => m.category || "Sin categoría")
+        .filter(Boolean)
+    )
+  ].sort();
+
+  const lowStock = lowStockAll.filter((m) => {
+    const matchesCategory =
+      lowStockCategory === "todas" ||
+      (m.category || "Sin categoría") === lowStockCategory;
+
+    const matchesMode =
+      lowStockMode === "todos" ||
+      (lowStockMode === "controlados" && m.criticalEnabled !== false) ||
+      (lowStockMode === "no_controlados" && m.criticalEnabled === false);
+
+    return matchesCategory && matchesMode;
+  });
+
   const dueSoon = activeLoans.filter((loan) => {
     const days = Math.ceil((new Date(loan.expectedReturn) - new Date(today())) / 86400000);
     return days >= 0 && days <= 1;
   });
-  const zeroStock = state.materials.filter((m) => Number(m.stock) <= 0);
-  const unavailableTools = state.tools.filter((tool) => ["en reparación", "dañado", "perdido", "dado de baja"].includes(tool.status));
-  const blockedPeopleCount = [...state.students.map((p) => ["student", p.id]), ...state.teachers.map((p) => ["teacher", p.id])].filter(([type, id]) => getBlockReason(state.loans, type, id)).length;
-  const totalStockRows = state.materials.map((m) => ({ ...m, status: Number(m.stock) < Number(m.minStock) ? "bajo" : "ok" }));
-  const requested = Object.values(state.loans.flatMap((l) => l.items).reduce((acc, item) => {
-    acc[item.code] = acc[item.code] || { name: item.name, qty: 0 };
-    acc[item.code].qty += Number(item.qty);
-    return acc;
-  }, {})).sort((a, b) => b.qty - a.qty).slice(0, 5);
+
+  const zeroStock = state.materials.filter(
+    (m) => m.criticalEnabled !== false && Number(m.stock || 0) <= 0
+  );
+
+  const unavailableTools = state.tools.filter((tool) =>
+    ["en reparación", "dañado", "perdido", "dado de baja"].includes(tool.status)
+  );
+
+  const blockedPeopleCount = [
+    ...state.students.map((p) => ["student", p.id]),
+    ...state.teachers.map((p) => ["teacher", p.id])
+  ].filter(([type, id]) => getBlockReason(state.loans, type, id)).length;
+
+  const totalStockRows = state.materials.map((m) => ({
+    ...m,
+    status: isCriticalStockItem(m) ? "bajo" : "ok"
+  }));
+
+  const requested = Object.values(
+    state.loans
+      .flatMap((l) => l.items)
+      .reduce((acc, item) => {
+        acc[item.code] = acc[item.code] || { name: item.name, qty: 0 };
+        acc[item.code].qty += Number(item.qty);
+        return acc;
+      }, {})
+  )
+    .sort((a, b) => b.qty - a.qty)
+    .slice(0, 5);
+
   const lineData = Array.from({ length: 14 }).map((_, ix) => {
-  const date = new Date();
-  date.setHours(12, 0, 0, 0);
-  date.setDate(date.getDate() - (13 - ix));
+    const date = new Date();
+    date.setHours(12, 0, 0, 0);
+    date.setDate(date.getDate() - (13 - ix));
 
-  const dateKey = date.toISOString().slice(0, 10);
+    const dateKey = date.toISOString().slice(0, 10);
 
-  const prestamos = (state.loans || []).filter((loan) => {
-    const loanDate = String(loan.createdAt || "").slice(0, 10);
-    return loanDate === dateKey;
-  }).length;
+    const prestamos = (state.loans || []).filter((loan) => {
+      const loanDate = String(loan.createdAt || "").slice(0, 10);
+      return loanDate === dateKey;
+    }).length;
 
-  return {
-    label: date.toLocaleDateString("es-CL", {
-      day: "2-digit",
-      month: "2-digit"
-    }),
-    prestamos
-  };
+    return {
+      label: date.toLocaleDateString("es-CL", {
+        day: "2-digit",
+        month: "2-digit"
+      }),
+      prestamos
+    };
   });
+
   const kpis = [
     ["stock", "Materiales en stock", state.materials.reduce((sum, m) => sum + Number(m.stock), 0), Boxes, "blue"],
     ["activeLoans", "Préstamos activos", activeLoans.length, ClipboardList, "amber"],
     ["overdue", "Préstamos vencidos", overdue.length, AlertTriangle, "red"],
     ["lowStock", "Stock bajo", lowStock.length, Gauge, "green"]
   ];
+
   const detailMap = {
     stock: {
       title: "Detalle de materiales en stock",
       rows: totalStockRows,
-      columns: [["name", "Material"], ["code", "Código"], ["category", "Categoría"], ["stock", "Stock"], ["minStock", "Mínimo"], ["unit", "Unidad"], ["location", "Ubicación"], ["status", "Estado"]]
+      columns: [
+        ["name", "Material"],
+        ["code", "Código"],
+        ["category", "Categoría"],
+        ["stock", "Stock"],
+        ["minStock", "Mínimo"],
+        ["unit", "Unidad"],
+        ["location", "Ubicación"],
+        ["status", "Estado"]
+      ]
     },
     activeLoans: {
       title: "Detalle de préstamos activos",
-      rows: activeLoans.map((l) => ({ ...l, folioText: displayFolio(l, "PRE"), itemsText: l.items.map((i) => `${i.name} (${i.qty}${i.nonReturnable ? ", no retorna" : ""})`).join(", "), days: isOverdue(l) ? overdueDays(l.expectedReturn) : 0 })),
-      columns: [["folioText", "Folio"], ["requesterName", "Solicitante"], ["createdAt", "Fecha"], ["expectedReturn", "Devuelve"], ["itemsText", "Ítems"], ["days", "Atraso"]]
+      rows: activeLoans.map((l) => ({
+        ...l,
+        folioText: displayFolio(l, "PRE"),
+        itemsText: l.items.map((i) => `${i.name} (${i.qty}${i.nonReturnable ? ", no retorna" : ""})`).join(", "),
+        days: isOverdue(l) ? overdueDays(l.expectedReturn) : 0
+      })),
+      columns: [
+        ["folioText", "Folio"],
+        ["requesterName", "Solicitante"],
+        ["createdAt", "Fecha"],
+        ["expectedReturn", "Devuelve"],
+        ["itemsText", "Ítems"],
+        ["days", "Atraso"]
+      ]
     },
     overdue: {
       title: "Detalle de préstamos vencidos",
-      rows: overdue.map((l) => ({ ...l, folioText: displayFolio(l, "PRE"), itemsText: l.items.map((i) => `${i.name} (${i.qty}${i.nonReturnable ? ", no retorna" : ""})`).join(", "), days: overdueDays(l.expectedReturn) })),
-      columns: [["folioText", "Folio"], ["requesterName", "Solicitante"], ["expectedReturn", "Fecha esperada"], ["days", "Días de atraso"], ["itemsText", "Ítems"], ["notes", "Observaciones"]]
+      rows: overdue.map((l) => ({
+        ...l,
+        folioText: displayFolio(l, "PRE"),
+        itemsText: l.items.map((i) => `${i.name} (${i.qty}${i.nonReturnable ? ", no retorna" : ""})`).join(", "),
+        days: overdueDays(l.expectedReturn)
+      })),
+      columns: [
+        ["folioText", "Folio"],
+        ["requesterName", "Solicitante"],
+        ["expectedReturn", "Fecha esperada"],
+        ["days", "Días de atraso"],
+        ["itemsText", "Ítems"],
+        ["notes", "Observaciones"]
+      ]
     },
     lowStock: {
       title: "Detalle de materiales con stock bajo",
       rows: lowStock,
-      columns: [["name", "Material"], ["code", "Código"], ["stock", "Stock"], ["minStock", "Mínimo"], ["unit", "Unidad"], ["location", "Ubicación"]]
+      columns: [
+        ["name", "Material"],
+        ["code", "Código"],
+        ["stock", "Stock"],
+        ["minStock", "Mínimo"],
+        ["unit", "Unidad"],
+        ["location", "Ubicación"]
+      ]
     }
   };
+
   const movementFolio = movementDetail?.detail?.match(/\bPRE-\d{4}-\d{4}\b/)?.[0] || "";
-  const movementLoan = movementDetail ? (
-    state.loans.find((loan) => loan.id === movementDetail.loanId) ||
-    state.loans.find((loan) => movementFolio && displayFolio(loan, "PRE") === movementFolio)
-  ) : null;
-  const movementKey = movementDetail ? (
-    (state.keys || []).find((key) => key.id === movementDetail.keyId) ||
-    (state.keys || []).find((key) => String(movementDetail.detail || "").includes(`Llave ${key.number}`))
-  ) : null;
-  const canReturnLoan = movementLoan?.status === "activo" && movementDetail?.type === "salida" && movementLoan.items.some((item) => !item.nonReturnable);
-  const chartTooltipStyle = { background: "#ffffff", border: "1px solid #c7d2e7", color: "#061225", borderRadius: 8, boxShadow: "0 12px 26px rgba(15, 23, 42, 0.16)" };
+
+  const movementLoan = movementDetail
+    ? state.loans.find((loan) => loan.id === movementDetail.loanId) ||
+      state.loans.find((loan) => movementFolio && displayFolio(loan, "PRE") === movementFolio)
+    : null;
+
+  const movementKey = movementDetail
+    ? (state.keys || []).find((key) => key.id === movementDetail.keyId) ||
+      (state.keys || []).find((key) => String(movementDetail.detail || "").includes(`Llave ${key.number}`))
+    : null;
+
+  const canReturnLoan =
+    movementLoan?.status === "activo" &&
+    movementDetail?.type === "salida" &&
+    movementLoan.items.some((item) => !item.nonReturnable);
+
+  const chartTooltipStyle = {
+    background: "#ffffff",
+    border: "1px solid #c7d2e7",
+    color: "#061225",
+    borderRadius: 8,
+    boxShadow: "0 12px 26px rgba(15, 23, 42, 0.16)"
+  };
+
   return (
     <div className="dashboard-control grid gap-3">
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {kpis.map(([id, label, value, Icon, tone]) => (
-          <button key={label} type="button" onClick={() => setDetail(id)} className="panel dashboard-kpi text-left transition hover:border-safety-500 hover:ring-2 hover:ring-safety-500">
+          <button
+            key={label}
+            type="button"
+            onClick={() => setDetail(id)}
+            className="panel dashboard-kpi text-left transition hover:border-safety-500 hover:ring-2 hover:ring-safety-500"
+          >
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-slate-400">{label}</p>
                 <p className="mt-1 text-2xl font-black text-white sm:text-3xl">{value}</p>
               </div>
-              <div className={`grid h-9 w-9 place-items-center rounded-md ${tone === "red" ? "bg-red-500/15 text-red-300" : tone === "amber" ? "bg-amber-500/15 text-amber-300" : "bg-sky-500/15 text-sky-300"}`}><Icon size={18} /></div>
+
+              <div
+                className={`grid h-9 w-9 place-items-center rounded-md ${
+                  tone === "red"
+                    ? "bg-red-500/15 text-red-300"
+                    : tone === "amber"
+                      ? "bg-amber-500/15 text-amber-300"
+                      : "bg-sky-500/15 text-sky-300"
+                }`}
+              >
+                <Icon size={18} />
+              </div>
             </div>
           </button>
         ))}
       </section>
+
       {detail && (
-        <Modal title={detailMap[detail].title} onClose={() => setDetail(null)}>
-          <DataTable rows={detailMap[detail].rows} columns={detailMap[detail].columns} compact />
+        <Modal
+          title={detailMap[detail].title}
+          onClose={() => setDetail(null)}
+          wide={detail === "lowStock"}
+        >
+          {detail === "lowStock" ? (
+            <div className="grid gap-4">
+              <div className="grid gap-3 rounded-lg border border-steel-700 bg-steel-850 p-4 md:grid-cols-3">
+                <Field label="Categoría">
+                  <select
+                    className={inputClass}
+                    value={lowStockCategory}
+                    onChange={(e) => setLowStockCategory(e.target.value)}
+                  >
+                    <option value="todas">Todas las categorías</option>
+                    {lowStockCategoryOptions.map((category) => (
+                      <option key={category} value={category}>
+                        {category}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+
+                <Field label="Estado de control">
+                  <select
+                    className={inputClass}
+                    value={lowStockMode}
+                    onChange={(e) => setLowStockMode(e.target.value)}
+                  >
+                    <option value="controlados">Solo controlados</option>
+                    <option value="todos">Todos los bajo stock</option>
+                    <option value="no_controlados">No controlados / compra única</option>
+                  </select>
+                </Field>
+
+                <div className="rounded-lg border border-steel-700 bg-steel-900 p-3 text-sm text-slate-300">
+                  Mostrando{" "}
+                  <strong className="text-white">{lowStock.length}</strong> de{" "}
+                  <strong className="text-white">{lowStockAll.length}</strong>{" "}
+                  elemento(s) bajo mínimo.
+                </div>
+              </div>
+
+              <DataTable
+                rows={lowStock.map((item) => ({
+                  ...item,
+                  controlText: item.criticalEnabled === false ? "No controlado" : "Controlado"
+                }))}
+                columns={[
+                  ["name", "Material"],
+                  ["code", "Código"],
+                  ["category", "Categoría"],
+                  ["stock", "Stock"],
+                  ["minStock", "Mínimo"],
+                  ["unit", "Unidad"],
+                  ["location", "Ubicación"],
+                  ["controlText", "Control"]
+                ]}
+                compact
+                actions={(row) => (
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      variant="ghost"
+                      className="px-2"
+                      onClick={() => setEditingMaterial(row)}
+                    >
+                      Revisar
+                    </Button>
+
+                    {row.criticalEnabled === false ? (
+                      <Button
+                        variant="ghost"
+                        className="px-2 text-emerald-700"
+                        onClick={() => {
+                          dispatch({
+                            type: "UPSERT_ENTITY",
+                            collection: "materials",
+                            prefix: "mat",
+                            row: {
+                              ...row,
+                              criticalEnabled: true
+                            }
+                          });
+
+                          notify("Material reincorporado al stock crítico");
+                        }}
+                      >
+                        Controlar
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        className="px-2 text-amber-700"
+                        onClick={() => {
+                          dispatch({
+                            type: "UPSERT_ENTITY",
+                            collection: "materials",
+                            prefix: "mat",
+                            row: {
+                              ...row,
+                              criticalEnabled: false
+                            }
+                          });
+
+                          notify("Material excluido del stock crítico");
+                        }}
+                      >
+                        No controlar
+                      </Button>
+                    )}
+                  </div>
+                )}
+              />
+            </div>
+          ) : (
+            <DataTable
+              rows={detailMap[detail].rows}
+              columns={detailMap[detail].columns}
+              compact
+            />
+          )}
+
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setDetail(null)}>
+              Cerrar
+            </Button>
+          </div>
         </Modal>
       )}
+
+      {editingMaterial && (
+        <EditEntityModal
+          collection="materials"
+          config={configs.materials}
+          initial={editingMaterial}
+          onClose={() => setEditingMaterial(null)}
+          onSave={(row) => {
+            const finalRow = row.code
+              ? row
+              : {
+                  ...row,
+                  code: generateEntityCode(state, "materials", row)
+                };
+
+            dispatch({
+              type: "UPSERT_ENTITY",
+              collection: "materials",
+              prefix: "mat",
+              row: finalRow
+            });
+
+            notify("Material actualizado");
+            setEditingMaterial(null);
+          }}
+        />
+      )}
+
       {movementDetail && (
         <Modal title="Detalle de movimiento" onClose={() => setMovementDetail(null)} wide>
           <div className="grid gap-4">
@@ -1751,38 +2029,104 @@ function Dashboard({ openLoans, openKeys }) {
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <p className="text-lg font-bold text-white">{movementDetail.detail}</p>
-                  <p className="mt-1 text-sm text-slate-400">{formatDate(movementDetail.date)} · {movementDetail.requesterName || "Sin responsable"}</p>
+                  <p className="mt-1 text-sm text-slate-400">
+                    {formatDate(movementDetail.date)} · {movementDetail.requesterName || "Sin responsable"}
+                  </p>
                 </div>
-                <Badge tone={movementDetail.type === "entrada" ? "green" : movementDetail.type === "solicitud" ? "blue" : "amber"}>{movementDetail.type}</Badge>
+
+                <Badge tone={movementDetail.type === "entrada" ? "green" : movementDetail.type === "solicitud" ? "blue" : "amber"}>
+                  {movementDetail.type}
+                </Badge>
               </div>
+
               <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                <div><p className="text-xs uppercase text-slate-500">Estado</p><p className="font-semibold text-white">{movementDetail.status || "Sin estado"}</p></div>
-                <div><p className="text-xs uppercase text-slate-500">Operador</p><p className="font-semibold text-white">{movementDetail.operatorName || "Sin registro"}</p></div>
-                <div><p className="text-xs uppercase text-slate-500">Folio</p><p className="font-semibold text-white">{movementFolio || movementLoan?.folio || "No asociado"}</p></div>
+                <div>
+                  <p className="text-xs uppercase text-slate-500">Estado</p>
+                  <p className="font-semibold text-white">{movementDetail.status || "Sin estado"}</p>
+                </div>
+
+                <div>
+                  <p className="text-xs uppercase text-slate-500">Operador</p>
+                  <p className="font-semibold text-white">{movementDetail.operatorName || "Sin registro"}</p>
+                </div>
+
+                <div>
+                  <p className="text-xs uppercase text-slate-500">Folio</p>
+                  <p className="font-semibold text-white">{movementFolio || movementLoan?.folio || "No asociado"}</p>
+                </div>
               </div>
             </div>
+
             {movementLoan && (
               <div>
                 <h3 className="mb-2 text-sm font-bold text-white">Items del prestamo</h3>
-                <DataTable rows={movementLoan.items.map((item) => ({ ...item, returnMode: item.nonReturnable ? "No retorna" : "Debe volver" }))} columns={[["name", "Item"], ["code", "Codigo"], ["type", "Tipo"], ["qty", "Cantidad"], ["returnMode", "Retorno"]]} compact />
+                <DataTable
+                  rows={movementLoan.items.map((item) => ({
+                    ...item,
+                    returnMode: item.nonReturnable ? "No retorna" : "Debe volver"
+                  }))}
+                  columns={[
+                    ["name", "Item"],
+                    ["code", "Codigo"],
+                    ["type", "Tipo"],
+                    ["qty", "Cantidad"],
+                    ["returnMode", "Retorno"]
+                  ]}
+                  compact
+                />
               </div>
             )}
+
             {movementKey && (
               <div className="rounded-md border border-steel-700 bg-steel-850 p-4">
-                <p className="font-bold text-white">Llave {movementKey.number} · {movementKey.name}</p>
-                <p className="text-sm text-slate-400">Estado: {movementKey.status} · Responsable actual: {movementKey.responsible || "En panol"}</p>
+                <p className="font-bold text-white">
+                  Llave {movementKey.number} · {movementKey.name}
+                </p>
+                <p className="text-sm text-slate-400">
+                  Estado: {movementKey.status} · Responsable actual: {movementKey.responsible || "En panol"}
+                </p>
               </div>
             )}
+
             <div className="flex flex-wrap justify-end gap-2">
-              <Button variant="secondary" onClick={() => setMovementDetail(null)}>Cerrar</Button>
-              {movementKey && <Button variant="secondary" onClick={() => { setMovementDetail(null); openKeys?.(); }}>Abrir control de llaves</Button>}
-              {canReturnLoan && <Button onClick={() => { setMovementDetail(null); openLoans?.("return", movementLoan.id); }}><RotateCcw size={16} />Registrar devolucion</Button>}
+              <Button variant="secondary" onClick={() => setMovementDetail(null)}>
+                Cerrar
+              </Button>
+
+              {movementKey && (
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setMovementDetail(null);
+                    openKeys?.();
+                  }}
+                >
+                  Abrir control de llaves
+                </Button>
+              )}
+
+              {canReturnLoan && (
+                <Button
+                  onClick={() => {
+                    setMovementDetail(null);
+                    openLoans?.("return", movementLoan.id);
+                  }}
+                >
+                  <RotateCcw size={16} />
+                  Registrar devolucion
+                </Button>
+              )}
             </div>
           </div>
         </Modal>
       )}
+
       <section className="panel dashboard-alerts">
-        <h2 className="section-title"><AlertTriangle size={18} />Alertas inteligentes</h2>
+        <h2 className="section-title">
+          <AlertTriangle size={18} />
+          Alertas inteligentes
+        </h2>
+
         <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
           <AlertTile label="Stock en cero" value={zeroStock.length} tone="red" />
           <AlertTile label="Préstamos por vencer" value={dueSoon.length} tone="amber" />
@@ -1790,49 +2134,135 @@ function Dashboard({ openLoans, openKeys }) {
           <AlertTile label="Herramientas no disponibles" value={unavailableTools.length} tone="amber" />
         </div>
       </section>
+
       <section className="dashboard-chart-row grid gap-3 xl:grid-cols-2">
         <ChartPanel title="Top 5 materiales solicitados">
           <ResponsiveContainer width="100%" height={145}>
-            <BarChart data={requested}><CartesianGrid strokeDasharray="3 3" stroke="#cbd5e1" /><XAxis dataKey="name" stroke="#64748b" tick={{ fontSize: 11 }} /><YAxis stroke="#64748b" /><Tooltip contentStyle={chartTooltipStyle} labelStyle={{ color: "#061225" }} /><Bar dataKey="qty" fill="#f59e0b" radius={[4, 4, 0, 0]} /></BarChart>
+            <BarChart data={requested}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#cbd5e1" />
+              <XAxis dataKey="name" stroke="#64748b" tick={{ fontSize: 11 }} />
+              <YAxis stroke="#64748b" />
+              <Tooltip contentStyle={chartTooltipStyle} labelStyle={{ color: "#061225" }} />
+              <Bar dataKey="qty" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+            </BarChart>
           </ResponsiveContainer>
         </ChartPanel>
+
         <ChartPanel title="Préstamos por día">
           <ResponsiveContainer width="100%" height={145}>
-            <LineChart data={lineData}><CartesianGrid strokeDasharray="3 3" stroke="#cbd5e1" /><XAxis dataKey="label" stroke="#64748b" /><YAxis stroke="#64748b" /><Tooltip contentStyle={chartTooltipStyle} labelStyle={{ color: "#061225" }} /><Line type="monotone" dataKey="prestamos" stroke="#38bdf8" strokeWidth={3} dot={{ fill: "#38bdf8" }} /></LineChart>
+            <LineChart data={lineData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#cbd5e1" />
+              <XAxis dataKey="label" stroke="#64748b" />
+              <YAxis stroke="#64748b" />
+              <Tooltip contentStyle={chartTooltipStyle} labelStyle={{ color: "#061225" }} />
+              <Line
+                type="monotone"
+                dataKey="prestamos"
+                stroke="#38bdf8"
+                strokeWidth={3}
+                dot={{ fill: "#38bdf8" }}
+              />
+            </LineChart>
           </ResponsiveContainer>
         </ChartPanel>
       </section>
+
       <section className="grid gap-3 xl:grid-cols-[minmax(420px,1.2fr)_minmax(0,0.8fr)]">
         <div className="panel dashboard-table-panel xl:order-2">
           <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <h2 className="section-title mb-0"><AlertTriangle size={18} />Alertas de stock crítico</h2>
-            <Button variant="secondary" className="px-3 py-2" onClick={() => setDetail("lowStock")}>Ver todo</Button>
+            <h2 className="section-title mb-0">
+              <AlertTriangle size={18} />
+              Alertas de stock crítico
+            </h2>
+
+            <Button
+              variant="secondary"
+              className="px-3 py-2"
+              onClick={() => setDetail("lowStock")}
+            >
+              Ver todo
+            </Button>
           </div>
-          <DataTable rows={lowStock.slice(0, 4)} columns={[["name", "Material"], ["code", "Código"], ["stock", "Stock"], ["minStock", "Mínimo"], ["location", "Ubicación"]]} compact />
+
+          <DataTable
+            rows={lowStock.slice(0, 4)}
+            columns={[
+              ["name", "Material"],
+              ["code", "Código"],
+              ["stock", "Stock"],
+              ["minStock", "Mínimo"],
+              ["location", "Ubicación"]
+            ]}
+            compact
+          />
         </div>
+
         <div className="panel dashboard-movements-panel xl:order-1">
           <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <h2 className="section-title mb-0"><History size={18} />Últimos movimientos</h2>
-            <p className="text-sm text-slate-400">Haz clic para ver detalle y acciones.</p>
+            <h2 className="section-title mb-0">
+              <History size={18} />
+              Últimos movimientos
+            </h2>
+
+            <p className="text-sm text-slate-400">
+              Haz clic para ver detalle y acciones.
+            </p>
           </div>
+
           <div className="dashboard-movements-list space-y-2">
             {state.movements.slice(0, 10).map((m) => (
-              <button key={m.id} type="button" onClick={() => setMovementDetail(m)} className="w-full rounded-md border border-steel-700 bg-steel-850 px-3 py-3 text-left transition hover:border-safety-500 hover:bg-steel-800 hover:ring-2 hover:ring-safety-500/30">
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => setMovementDetail(m)}
+                className="w-full rounded-md border border-steel-700 bg-steel-850 px-3 py-3 text-left transition hover:border-safety-500 hover:bg-steel-800 hover:ring-2 hover:ring-safety-500/30"
+              >
                 <div className="flex justify-between gap-2">
                   <p className="line-clamp-2 text-sm font-semibold text-white">{m.detail}</p>
-                  <Badge tone={m.type === "entrada" ? "green" : m.type === "solicitud" ? "blue" : "amber"}>{m.type}</Badge>
+                  <Badge tone={m.type === "entrada" ? "green" : m.type === "solicitud" ? "blue" : "amber"}>
+                    {m.type}
+                  </Badge>
                 </div>
-                <p className="mt-1 truncate text-xs text-slate-400">{formatDate(m.date)} · {m.requesterName || "Sin responsable"}</p>
+
+                <p className="mt-1 truncate text-xs text-slate-400">
+                  {formatDate(m.date)} · {m.requesterName || "Sin responsable"}
+                </p>
               </button>
             ))}
-            {state.movements.length === 0 && <div className="rounded-md border border-steel-700 bg-steel-850 p-4 text-center text-sm text-slate-400">Sin movimientos registrados</div>}
+
+            {state.movements.length === 0 && (
+              <div className="rounded-md border border-steel-700 bg-steel-850 p-4 text-center text-sm text-slate-400">
+                Sin movimientos registrados
+              </div>
+            )}
           </div>
         </div>
       </section>
-      {overdue.length > 0 && <section className="panel">
-        <h2 className="section-title"><RotateCcw size={18} />Pendientes con atraso</h2>
-        <DataTable rows={overdue.map((l) => ({ ...l, folioText: displayFolio(l, "PRE"), days: overdueDays(l.expectedReturn) }))} columns={[["folioText", "Folio"], ["requesterName", "Solicitante"], ["expectedReturn", "Fecha esperada"], ["days", "Días de atraso"], ["notes", "Observaciones"]]} compact />
-      </section>}
+
+      {overdue.length > 0 && (
+        <section className="panel">
+          <h2 className="section-title">
+            <RotateCcw size={18} />
+            Pendientes con atraso
+          </h2>
+
+          <DataTable
+            rows={overdue.map((l) => ({
+              ...l,
+              folioText: displayFolio(l, "PRE"),
+              days: overdueDays(l.expectedReturn)
+            }))}
+            columns={[
+              ["folioText", "Folio"],
+              ["requesterName", "Solicitante"],
+              ["expectedReturn", "Fecha esperada"],
+              ["days", "Días de atraso"],
+              ["notes", "Observaciones"]
+            ]}
+            compact
+          />
+        </section>
+      )}
     </div>
   );
 }
