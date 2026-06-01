@@ -1676,6 +1676,7 @@ function Dashboard({ openLoans, openKeys }) {
 
   const activeLoans = state.loans.filter((l) => l.status === "activo");
   const overdue = activeLoans.filter(isOverdue);
+  const overdueStudents = overdue.filter((loan) => loan.requesterType === "student");
 
 const lowStockAll = state.materials.filter((m) =>
   isFungibleStockCategory(m) &&
@@ -2271,30 +2272,30 @@ const lowStockCategoryOptions = [
         </div>
       </section>
 
-      {overdue.length > 0 && (
-        <section className="panel">
-          <h2 className="section-title">
-            <RotateCcw size={18} />
-            Pendientes con atraso
-          </h2>
+    {overdueStudents.length > 0 && (
+      <section className="panel">
+        <h2 className="section-title">
+          <RotateCcw size={18} />
+          Alumnos pendientes con atraso
+        </h2>
 
-          <DataTable
-            rows={overdue.map((l) => ({
-              ...l,
-              folioText: displayFolio(l, "PRE"),
-              days: overdueDays(l.expectedReturn)
-            }))}
-            columns={[
-              ["folioText", "Folio"],
-              ["requesterName", "Solicitante"],
-              ["expectedReturn", "Fecha esperada"],
-              ["days", "Días de atraso"],
-              ["notes", "Observaciones"]
-            ]}
-            compact
-          />
-        </section>
-      )}
+        <DataTable
+          rows={overdueStudents.map((l) => ({
+            ...l,
+            folioText: displayFolio(l, "PRE"),
+            days: overdueDays(l.expectedReturn)
+          }))}
+          columns={[
+            ["folioText", "Folio"],
+            ["requesterName", "Alumno"],
+            ["expectedReturn", "Fecha esperada"],
+            ["days", "Días de atraso"],
+            ["notes", "Observaciones"]
+          ]}
+          compact
+        />
+      </section>
+    )}
     </div>
   );
 }
