@@ -196,6 +196,21 @@ const stripHeavyStudentPhotos = (state) => ({
   ...state,
   students: (state.students || []).map(({ photoUrl, ...student }) => student)
 });
+const personCollectionByType = {
+  student: "students",
+  teacher: "teachers",
+  staff: "staff"
+};
+const personTypeByCollection = {
+  students: "student",
+  teachers: "teacher",
+  staff: "staff"
+};
+const personLabelByType = {
+  student: "Alumno",
+  teacher: "Profesor",
+  staff: "Personal"
+};
 const addDays = (n) => {
   const date = new Date();
   date.setDate(date.getDate() + n);
@@ -435,6 +450,7 @@ function createEmptyState() {
     appUsers: [defaultAdminUser],
     students: [],
     teachers: [],
+    staff: [],
     materials: [],
     tools: [],
     keys: defaultKeys,
@@ -467,6 +483,7 @@ function removeDemoData(state) {
     appUsers: getAppUsers(state),
     students: (state.students || []).filter((item) => !demoStudentRuts.has(item.rut)),
     teachers: (state.teachers || []).filter((item) => !demoTeacherRuts.has(item.rut)),
+    staff: state.staff || [],
     materials: (state.materials || []).filter((item) => !demoMaterialCodes.has(item.code)),
     tools: (state.tools || []).filter((item) => !demoToolCodes.has(item.code)),
     keys: state.keys || defaultKeys,
@@ -495,7 +512,7 @@ function loadInitialState() {
   }
 }
 
-const cloudMergeCollections = ["students", "teachers", "materials", "tools", "keys", "workshopRooms", "workshopReservations", "loans", "requests", "invoices", "movements", "messages", "portalUsers", "appUsers", "auditLog", "backups"];
+const cloudMergeCollections = ["students", "teachers", "staff", "materials", "tools", "keys", "workshopRooms", "workshopReservations", "loans", "requests", "invoices", "movements", "messages", "portalUsers", "appUsers", "auditLog", "backups"];
 
 function mergeRowsById(remoteRows = [], localRows = []) {
   const merged = new Map();
@@ -1074,11 +1091,15 @@ function GlobalSearch({ allowedSections = [], onSelect }) {
     if (canSee("people")) {
       (state.students || []).forEach((student) => {
         const text = `${student.name} ${student.rut} ${student.course} ${student.email} ${student.phone}`;
-        if (matches(text)) rows.push({ id: `student-${student.id}`, section: "people", type: "Alumno", title: student.name, meta: `${student.course || "Sin curso"} · ${student.email || "sin email"}` });
+        if (matches(text)) rows.push({ id: `student-${student.id}`, section: "people", personType: "student", personId: student.id, type: "Alumno", title: student.name, meta: `${student.course || "Sin curso"} · ${student.email || "sin email"}` });
       });
       (state.teachers || []).forEach((teacher) => {
         const text = `${teacher.name} ${teacher.department} ${teacher.email}`;
-        if (matches(text)) rows.push({ id: `teacher-${teacher.id}`, section: "people", type: "Profesor", title: teacher.name, meta: `${teacher.department || "Sin departamento"} · ${teacher.email || "sin email"}` });
+        if (matches(text)) rows.push({ id: `teacher-${teacher.id}`, section: "people", personType: "teacher", personId: teacher.id, type: "Profesor", title: teacher.name, meta: `${teacher.department || "Sin departamento"} · ${teacher.email || "sin email"}` });
+      });
+      (state.staff || []).forEach((person) => {
+        const text = `${person.name} ${person.rut} ${person.role} ${person.department} ${person.email} ${person.phone}`;
+        if (matches(text)) rows.push({ id: `staff-${person.id}`, section: "people", personType: "staff", personId: person.id, type: "Personal", title: person.name, meta: `${person.role || person.department || "Sin cargo"} · ${person.email || "sin email"}` });
       });
     }
     if (canSee("inventory")) {
@@ -1287,6 +1308,7 @@ function Layout({ section, setSection, currentUser, onLogout }) {
   const [returnFocusLoanId, setReturnFocusLoanId] = useState("");
   const [inventoryAlertFilter, setInventoryAlertFilter] = useState("");
   const [loanAlertFilter, setLoanAlertFilter] = useState("");
+  const [focusedPerson, setFocusedPerson] = useState(null);
   const nav = [
     ["dashboard", "Dashboard", LayoutDashboard],
     ["alerts", "Centro de alertas", Bell],
@@ -1333,6 +1355,7 @@ function Layout({ section, setSection, currentUser, onLogout }) {
   const openSection = (id) => {
     clearContextFilters();
     setReturnFocusLoanId("");
+    setFocusedPerson(null);
     if (id === "keys") {
       setKeyPanelOpen(true);
       return;
@@ -1424,6 +1447,7 @@ function Layout({ section, setSection, currentUser, onLogout }) {
               onSelect={(result) => {
                 if (result.focusedTeacherId) setFocusedTeacherId(result.focusedTeacherId);
                 openSection(result.section);
+                if (result.personId && result.personType) setFocusedPerson({ type: result.personType, id: result.personId });
               }}
             />
             <div className="mobile-actions flex flex-wrap items-center gap-2">
@@ -1473,7 +1497,7 @@ function Layout({ section, setSection, currentUser, onLogout }) {
             />
           )}
           {section === "alerts" && <AdminAlertsCenter setSection={setSection} onOpenAlert={openAdminAlert} />}
-          {section === "people" && <People />}
+          {section === "people" && <People focusedPerson={focusedPerson} onFocusedPersonConsumed={() => setFocusedPerson(null)} />}
           {section === "inventory" && <Inventory alertFilter={inventoryAlertFilter} onClearAlertFilter={() => setInventoryAlertFilter("")} />}
           {section === "workshop" && <WorkshopReservations currentUser={currentUser} />}
           {section === "loans" && <Loans initialView={loanInitialView} returnFocusLoanId={returnFocusLoanId} alertFilter={loanAlertFilter} onClearAlertFilter={() => setLoanAlertFilter("")} />}
@@ -2683,6 +2707,7 @@ function AdminAssistant() {
 const configs = {
   students: { title: "Alumnos", icon: GraduationCap, prefix: "alu", fields: [["name", "Nombre"], ["rut", "RUT/ID"], ["course", "Carrera/curso"], ["email", "Email"], ["phone", "Teléfono"]], columns: [["name", "Nombre"], ["rut", "RUT/ID"], ["course", "Curso"], ["email", "Email"], ["phone", "Teléfono"]] },
   teachers: { title: "Profesores", icon: UserRound, prefix: "pro", fields: [["name", "Nombre"], ["department", "Departamento"], ["email", "Email"]], columns: [["name", "Nombre"], ["department", "Departamento"], ["email", "Email"]] },
+  staff: { title: "Personal", icon: UserCog, prefix: "per", fields: [["name", "Nombre"], ["rut", "RUT/ID"], ["role", "Cargo"], ["department", "Departamento"], ["email", "Email"], ["phone", "Teléfono"]], columns: [["name", "Nombre"], ["rut", "RUT/ID"], ["role", "Cargo"], ["department", "Departamento"], ["email", "Email"], ["phone", "Teléfono"]] },
   materials: { title: "Materiales", icon: Boxes, prefix: "mat", fields: [["name", "Nombre"], ["code", "Código"], ["category", "Categoría"], ["stock", "Stock actual", "number"], ["minStock", "Stock mínimo", "number"], ["unit", "Unidad"], ["location", "Ubicación"]], columns: [["name", "Nombre"], ["code", "Código"], ["category", "Categoría"], ["stock", "Stock"], ["minStock", "Mínimo"], ["unit", "Unidad"], ["location", "Ubicación"]] },
   tools: { title: "Herramientas", icon: Hammer, prefix: "her", fields: [["name", "Nombre"], ["code", "Código"], ["status", "Estado"], ["description", "Descripción"]], columns: [["name", "Nombre"], ["code", "Código"], ["status", "Estado"], ["description", "Descripción"]] }
 };
@@ -2724,10 +2749,15 @@ function generateEntityCode(state, collection, row = {}) {
   return `${prefix}-${String(nextNumber).padStart(4, "0")}`;
 }
 
-function People() {
-  const [tab, setTab] = useState("students");
+function People({ focusedPerson, onFocusedPersonConsumed }) {
+  const initialTab = personCollectionByType[focusedPerson?.type] || "students";
+  const [tab, setTab] = useState(initialTab);
   const config = configs[tab];
-  const tabs = ["students", "teachers"];
+  const tabs = ["students", "teachers", "staff"];
+  useEffect(() => {
+    const focusedTab = personCollectionByType[focusedPerson?.type];
+    if (focusedTab) setTab(focusedTab);
+  }, [focusedPerson]);
   return (
     <div className="grid gap-5">
       <div className="flex flex-wrap gap-2">
@@ -2737,7 +2767,12 @@ function People() {
           return <Button key={key} variant={tab === key ? "primary" : "secondary"} onClick={() => setTab(key)}><Icon size={16} />{cfg.title}</Button>;
         })}
       </div>
-      <CrudTable collection={tab} config={config} />
+      <CrudTable
+        collection={tab}
+        config={config}
+        focusedPerson={personCollectionByType[focusedPerson?.type] === tab ? focusedPerson : null}
+        onFocusedPersonConsumed={onFocusedPersonConsumed}
+      />
     </div>
   );
 }
@@ -2786,7 +2821,7 @@ function InventoryBulkPanel() {
 }
 
 
-function CrudTable({ collection, config, alertFilter = "", onClearAlertFilter }) {
+function CrudTable({ collection, config, alertFilter = "", onClearAlertFilter, focusedPerson, onFocusedPersonConsumed }) {
   const { state, dispatch, notify } = useApp();
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
@@ -2797,7 +2832,7 @@ function CrudTable({ collection, config, alertFilter = "", onClearAlertFilter })
   const [maxStock, setMaxStock] = useState("");
   const [sortMode, setSortMode] = useState("az");
 
-  const hasPersonProfile = collection === "students" || collection === "teachers";
+  const hasPersonProfile = collection === "students" || collection === "teachers" || collection === "staff";
   const isMaterials = collection === "materials";
   const alertFilterLabel = isMaterials ? INVENTORY_ALERT_FILTER_LABELS[alertFilter] || "" : "";
 
@@ -2882,6 +2917,14 @@ function CrudTable({ collection, config, alertFilter = "", onClearAlertFilter })
   useEffect(() => {
     setPage(1);
   }, [alertFilter]);
+
+  useEffect(() => {
+    if (!focusedPerson?.id || !hasPersonProfile) return;
+    const matched = (state[collection] || []).find((person) => person.id === focusedPerson.id);
+    if (!matched) return;
+    setProfile(matched);
+    onFocusedPersonConsumed?.();
+  }, [collection, focusedPerson, hasPersonProfile, onFocusedPersonConsumed, state]);
 
   const normalizeInventoryCategories = () => {
     const normalizeCategory = (value = "") => {
@@ -3199,7 +3242,7 @@ function CrudTable({ collection, config, alertFilter = "", onClearAlertFilter })
         {profile && (
           <PersonProfileModal
             person={profile}
-            type={collection === "students" ? "student" : "teacher"}
+            type={personTypeByCollection[collection] || "student"}
             onClose={() => setProfile(null)}
           />
         )}
@@ -3210,12 +3253,28 @@ function CrudTable({ collection, config, alertFilter = "", onClearAlertFilter })
 function PersonProfileModal({ person, type, onClose }) {
   const { state, notify } = useApp();
   const [sendingPendingEmail, setSendingPendingEmail] = useState(false);
-  const typeLabel = type === "student" ? "Alumno" : "Profesor";
+  const typeLabel = personLabelByType[type] || "Persona";
   const loans = state.loans.filter((loan) => loan.requesterId === person.id || normalizeHeader(loan.requesterName) === normalizeHeader(person.name));
   const activeLoans = loans.filter((loan) => loan.status === "activo");
-  const requests = type === "teacher" ? (state.requests || []).filter((request) => request.requesterId === person.id || normalizeHeader(request.requesterName) === normalizeHeader(person.name)) : [];
+  const requests = (state.requests || []).filter((request) => request.requesterId === person.id || normalizeHeader(request.requesterName) === normalizeHeader(person.name) || (person.email && normalizeHeader(request.requesterEmail || "") === normalizeHeader(person.email)));
   const messages = type === "teacher" ? (state.messages || []).filter((msg) => msg.teacherId === person.id) : [];
   const pendingReturnLoans = type === "teacher" ? getTeacherPendingReturnLoans(state.loans || [], person) : [];
+  const loanRows = loans.map((loan) => ({
+    folio: displayFolio(loan, "PRE"),
+    estado: loan.status,
+    fecha: loan.createdAt,
+    devolucion: loan.expectedReturn,
+    elementos: loan.items.map((item) => `${item.name} (${item.qty})`).join(", "),
+    observaciones: loan.notes || ""
+  }));
+  const requestRows = requests.map((request) => ({
+    folio: displayFolio(request, "SOL"),
+    estado: request.status,
+    fecha: request.createdAt,
+    requerida: request.expectedDate,
+    elementos: request.items.map((item) => `${item.name} (${item.qty})`).join(", "),
+    observaciones: request.notes || ""
+  }));
   const sendPendingEmail = async () => {
     if (!person.email || !pendingReturnLoans.length) return;
     setSendingPendingEmail(true);
@@ -3233,16 +3292,21 @@ function PersonProfileModal({ person, type, onClose }) {
   return (
     <Modal title={`Ficha rápida · ${person.name}`} onClose={onClose} wide>
       <div className="grid gap-5">
-        {type === "student" && (
-          <div className="flex flex-wrap items-center gap-4 rounded-md border border-steel-700 bg-steel-850 p-3">
-            <StudentPhotoAvatar person={person} size="lg" />
+        <div className="flex flex-wrap items-center gap-4 rounded-md border border-steel-700 bg-steel-850 p-3">
+          {type === "student" && <StudentPhotoAvatar person={person} size="lg" />}
+          {type !== "student" && <div className="grid h-16 w-16 place-items-center rounded-md border border-safety-500/40 bg-safety-500/10 text-xl font-black text-safety-500">{person.name?.slice(0, 2).toUpperCase() || "PE"}</div>}
             <div className="min-w-0">
               <p className="text-lg font-bold text-white">{person.name}</p>
-              <p className="text-sm text-slate-300">{person.rut || "Sin RUT"} · {person.course || "Sin curso"}</p>
-              <p className="mt-1 text-xs text-slate-400">{person.photoFileName ? `Foto asociada desde ${person.photoCourse || "carpeta importada"} · ${person.photoFileName}` : "Sin foto asociada todavía"}</p>
+              <p className="text-sm text-slate-300">
+                {person.rut || "Sin RUT"} · {person.course || person.role || person.department || "Sin grupo asignado"}
+              </p>
+              <p className="mt-1 text-xs text-slate-400">
+                {type === "student"
+                  ? (person.photoFileName ? `Foto asociada desde ${person.photoCourse || "carpeta importada"} · ${person.photoFileName}` : "Sin foto asociada todavía")
+                  : (person.email || "Sin email registrado")}
+              </p>
             </div>
-          </div>
-        )}
+        </div>
         <div className="grid gap-3 md:grid-cols-4">
           <div className="rounded-md border border-steel-700 bg-steel-850 p-3"><p className="text-sm text-slate-400">Tipo</p><p className="text-xl font-bold text-white">{typeLabel}</p></div>
           <div className="rounded-md border border-steel-700 bg-steel-850 p-3"><p className="text-sm text-slate-400">Préstamos activos</p><p className="text-xl font-bold text-white">{activeLoans.length}</p></div>
@@ -3263,16 +3327,14 @@ function PersonProfileModal({ person, type, onClose }) {
         <div className="grid gap-4 xl:grid-cols-2">
           <section className="grid gap-3">
             <h3 className="section-title"><ClipboardList size={18} />Préstamos</h3>
-            <DataTable rows={loans.map((loan) => ({ folio: displayFolio(loan, "PRE"), estado: loan.status, fecha: loan.createdAt, devolucion: loan.expectedReturn, items: loan.items.map((item) => `${item.name} (${item.qty})`).join(", ") }))} columns={[["folio", "Folio"], ["estado", "Estado"], ["fecha", "Entrega"], ["devolucion", "Devolución"], ["items", "Ítems"]]} compact />
+            <DataTable rows={loanRows} columns={[["folio", "Folio"], ["estado", "Estado"], ["fecha", "Entrega"], ["devolucion", "Devolución"], ["elementos", "Elementos"], ["observaciones", "Obs."]]} compact />
           </section>
           <section className="grid gap-3">
             <h3 className="section-title"><Inbox size={18} />Solicitudes y mensajes</h3>
-            {type === "teacher" ? (
-              <div className="grid gap-3">
-                <DataTable rows={requests.map((request) => ({ folio: displayFolio(request, "SOL"), estado: request.status, fecha: request.createdAt, items: request.items.map((item) => `${item.name} (${item.qty})`).join(", ") }))} columns={[["folio", "Folio"], ["estado", "Estado"], ["fecha", "Fecha"], ["items", "Ítems"]]} compact />
-                <p className="text-sm text-slate-400">Mensajes registrados: <span className="font-semibold text-white">{messages.length}</span></p>
-              </div>
-            ) : <p className="rounded-md border border-steel-700 bg-steel-850 p-4 text-sm text-slate-400">Las solicitudes docentes aplican solo a perfiles de profesor.</p>}
+            <div className="grid gap-3">
+              <DataTable rows={requestRows} columns={[["folio", "Folio"], ["estado", "Estado"], ["fecha", "Fecha"], ["requerida", "Requerida"], ["elementos", "Elementos"], ["observaciones", "Obs."]]} compact />
+              {type === "teacher" && <p className="text-sm text-slate-400">Mensajes registrados: <span className="font-semibold text-white">{messages.length}</span></p>}
+            </div>
           </section>
         </div>
       </div>
@@ -4590,6 +4652,7 @@ function parseGenericSheet(table, collection) {
 function findHeaderRowIndex(table, collection) {
   const expectedByCollection = {
     teachers: ["nombre", "departamento", "email"],
+    staff: ["nombre"],
     materials: ["nombre", "codigo", "stock"],
     tools: ["nombre", "codigo", "estado"]
   };
@@ -4639,11 +4702,12 @@ function DatabaseImport() {
     <div className="grid gap-6">
       <div className="grid gap-6 xl:grid-cols-[.85fr_1.15fr]">
       <div className="panel grid gap-4">
-        <h2 className="section-title"><Database size={18} />Importar alumnos, profesores o inventario</h2>
+        <h2 className="section-title"><Database size={18} />Importar alumnos, profesores, personal o inventario</h2>
         <Field label="Base de datos destino">
           <select className={inputClass} value={collection} onChange={(e) => { setCollection(e.target.value); setRows([]); }}>
             <option value="students">Alumnos</option>
             <option value="teachers">Profesores</option>
+            <option value="staff">Personal</option>
             <option value="materials">Materiales</option>
             <option value="tools">Herramientas</option>
           </select>
@@ -4814,6 +4878,7 @@ function normalizeImportedRow(row, collection) {
     rut: ["rut", "id", "run"],
     course: ["curso", "carrera", "course"],
     department: ["departamento", "department"],
+    role: ["cargo", "funcion", "función", "rol", "role", "puesto"],
     email: ["email", "correo"],
     phone: ["telefono", "teléfono", "phone"],
     code: ["codigo", "código", "code", "sku"],
@@ -4831,6 +4896,7 @@ function normalizeImportedRow(row, collection) {
   };
   if (collection === "students") return { name: get("name"), rut: get("rut"), course: get("course"), email: get("email"), phone: get("phone") };
   if (collection === "teachers") return { name: get("name"), department: get("department"), email: get("email") };
+  if (collection === "staff") return { name: get("name"), rut: get("rut"), role: get("role"), department: get("department"), email: get("email"), phone: get("phone") };
   if (collection === "materials") return { name: get("name"), code: get("code"), category: get("category") || "Sin clasificar", stock: Number(get("stock") || 0), minStock: Number(get("minStock") || 5), unit: get("unit") || "un", location: get("location") || "Por asignar" };
   return { name: get("name"), code: get("code"), status: get("status") || "disponible", description: get("description") };
 }
@@ -6139,7 +6205,7 @@ function DataTable({ rows, columns, actions, compact = false }) {
 function renderCell(row, key) {
   const value = row[key];
   if (key === "photoPreview") return <StudentPhotoAvatar person={row} size="xs" />;
-  if (key.toLowerCase().includes("date") || key === "fecha") return value ? formatDate(value) : "";
+  if (key.toLowerCase().includes("date") || ["fecha", "devolucion", "requerida", "entrega"].includes(key)) return value ? formatDate(value) : "";
   if (key === "status" || key === "estado") {
     const tone = String(value).includes("vencido") || String(value).includes("reparación") ? "red" : String(value).includes("activo") || String(value).includes("préstamo") ? "amber" : "green";
     return <Badge tone={tone}>{value}</Badge>;
