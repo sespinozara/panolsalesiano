@@ -257,6 +257,10 @@ const LOAN_ALERT_FILTER_LABELS = {
   "due-soon": "Préstamos por vencer"
 };
 
+const PEOPLE_ALERT_FILTER_LABELS = {
+  blocked: "Personas bloqueadas"
+};
+
 const getBlockReason = (loans, requesterType, requesterId) => {
   if (requesterType === "teacher") return "";
   const pending = loans.find((loan) => loan.status === "activo" && personKey(loan.requesterType, loan.requesterId) === personKey(requesterType, requesterId) && (loan.partialReturn || isOverdue(loan)));
@@ -1226,9 +1230,9 @@ const inputClass = "pc-input w-full rounded-md border border-steel-700 bg-steel-
 function Modal({ title, children, onClose, wide = false }) {
   return (
     <div className="pc-modal-backdrop fixed inset-0 z-[1500] grid place-items-center bg-black/60 p-2 sm:p-4" onMouseDown={onClose}>
-      <div className={`pc-modal-card max-h-[92vh] w-full ${wide ? "max-w-6xl" : "max-w-2xl"} overflow-auto rounded-lg border border-steel-700 bg-steel-900 shadow-2xl`} onMouseDown={(event) => event.stopPropagation()}>
-        <div className="flex items-center justify-between gap-3 border-b border-steel-700 px-3 py-3 sm:px-5 sm:py-4">
-          <h3 className="text-lg font-semibold text-white">{title}</h3>
+      <div className={`pc-modal-card max-h-[88vh] w-full ${wide ? "max-w-[min(1180px,calc(100vw-2rem))]" : "max-w-2xl"} overflow-auto rounded-lg border border-steel-700 bg-steel-900 shadow-2xl`} onMouseDown={(event) => event.stopPropagation()}>
+        <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-3 py-3 dark:border-steel-700 sm:px-5 sm:py-4">
+          <h3 className="text-lg font-semibold text-slate-950 dark:text-white">{title}</h3>
           <Button variant="ghost" onClick={onClose} className="px-2"><X size={18} /></Button>
         </div>
         <div className="p-3 sm:p-5">{children}</div>
@@ -1308,6 +1312,7 @@ function Layout({ section, setSection, currentUser, onLogout }) {
   const [returnFocusLoanId, setReturnFocusLoanId] = useState("");
   const [inventoryAlertFilter, setInventoryAlertFilter] = useState("");
   const [loanAlertFilter, setLoanAlertFilter] = useState("");
+  const [peopleAlertFilter, setPeopleAlertFilter] = useState("");
   const [focusedPerson, setFocusedPerson] = useState(null);
   const nav = [
     ["dashboard", "Dashboard", LayoutDashboard],
@@ -1351,6 +1356,7 @@ function Layout({ section, setSection, currentUser, onLogout }) {
   const clearContextFilters = () => {
     setInventoryAlertFilter("");
     setLoanAlertFilter("");
+    setPeopleAlertFilter("");
   };
   const openSection = (id) => {
     clearContextFilters();
@@ -1368,6 +1374,7 @@ function Layout({ section, setSection, currentUser, onLogout }) {
     if (target?.section === "inventory") {
       setInventoryAlertFilter(target.filter || "");
       setLoanAlertFilter("");
+      setPeopleAlertFilter("");
       setReturnFocusLoanId("");
       setKeyPanelOpen(false);
       setSection("inventory");
@@ -1376,10 +1383,20 @@ function Layout({ section, setSection, currentUser, onLogout }) {
     if (target?.section === "loans") {
       setLoanAlertFilter(target.filter || "");
       setInventoryAlertFilter("");
+      setPeopleAlertFilter("");
       setKeyPanelOpen(false);
       setLoanInitialView(target.view || "return");
       setReturnFocusLoanId("");
       setSection("loans");
+      return;
+    }
+    if (target?.section === "people") {
+      setPeopleAlertFilter(target.filter || "");
+      setInventoryAlertFilter("");
+      setLoanAlertFilter("");
+      setFocusedPerson(null);
+      setKeyPanelOpen(false);
+      setSection("people");
       return;
     }
     openSection(alert?.section || "alerts");
@@ -1489,6 +1506,7 @@ function Layout({ section, setSection, currentUser, onLogout }) {
               openLoans={(view = "return", loanId = "") => {
                 setInventoryAlertFilter("");
                 setLoanAlertFilter("");
+                setPeopleAlertFilter("");
                 setLoanInitialView(view);
                 setReturnFocusLoanId(loanId);
                 setKeyPanelOpen(false);
@@ -1497,7 +1515,7 @@ function Layout({ section, setSection, currentUser, onLogout }) {
             />
           )}
           {section === "alerts" && <AdminAlertsCenter setSection={setSection} onOpenAlert={openAdminAlert} />}
-          {section === "people" && <People focusedPerson={focusedPerson} onFocusedPersonConsumed={() => setFocusedPerson(null)} />}
+          {section === "people" && <People focusedPerson={focusedPerson} onFocusedPersonConsumed={() => setFocusedPerson(null)} alertFilter={peopleAlertFilter} onClearAlertFilter={() => setPeopleAlertFilter("")} />}
           {section === "inventory" && <Inventory alertFilter={inventoryAlertFilter} onClearAlertFilter={() => setInventoryAlertFilter("")} />}
           {section === "workshop" && <WorkshopReservations currentUser={currentUser} />}
           {section === "loans" && <Loans initialView={loanInitialView} returnFocusLoanId={returnFocusLoanId} alertFilter={loanAlertFilter} onClearAlertFilter={() => setLoanAlertFilter("")} />}
@@ -2535,7 +2553,8 @@ function buildAdminAlerts(state) {
   const unavailableTools = state.tools.filter((tool) => tool.status !== "disponible");
   const blockedPeople = [
     ...state.students.map((person) => ({ ...person, typeLabel: "Alumno", requesterType: "student" })),
-    ...state.teachers.map((person) => ({ ...person, typeLabel: "Profesor", requesterType: "teacher" }))
+    ...state.teachers.map((person) => ({ ...person, typeLabel: "Profesor", requesterType: "teacher" })),
+    ...(state.staff || []).map((person) => ({ ...person, typeLabel: "Personal", requesterType: "staff" }))
   ].map((person) => ({ ...person, blockReason: getBlockReason(state.loans, person.requesterType, person.id) })).filter((person) => person.blockReason);
   return [
     {
@@ -2608,6 +2627,7 @@ function buildAdminAlerts(state) {
       title: "Personas bloqueadas",
       body: blockedPeople.length ? `${blockedPeople.length} persona(s) bloqueadas por pendientes.` : "No hay bloqueos activos.",
       section: "people",
+      targetFilter: { section: "people", filter: "blocked" },
       actionLabel: "Ver personas",
       rows: blockedPeople.map((person) => ({ nombre: person.name, tipo: person.typeLabel, motivo: person.blockReason })),
       columns: [["nombre", "Nombre"], ["tipo", "Tipo"], ["motivo", "Motivo"]]
@@ -2749,7 +2769,7 @@ function generateEntityCode(state, collection, row = {}) {
   return `${prefix}-${String(nextNumber).padStart(4, "0")}`;
 }
 
-function People({ focusedPerson, onFocusedPersonConsumed }) {
+function People({ focusedPerson, onFocusedPersonConsumed, alertFilter = "", onClearAlertFilter }) {
   const initialTab = personCollectionByType[focusedPerson?.type] || "students";
   const [tab, setTab] = useState(initialTab);
   const config = configs[tab];
@@ -2770,6 +2790,8 @@ function People({ focusedPerson, onFocusedPersonConsumed }) {
       <CrudTable
         collection={tab}
         config={config}
+        alertFilter={alertFilter}
+        onClearAlertFilter={onClearAlertFilter}
         focusedPerson={personCollectionByType[focusedPerson?.type] === tab ? focusedPerson : null}
         onFocusedPersonConsumed={onFocusedPersonConsumed}
       />
@@ -2834,7 +2856,9 @@ function CrudTable({ collection, config, alertFilter = "", onClearAlertFilter, f
 
   const hasPersonProfile = collection === "students" || collection === "teachers" || collection === "staff";
   const isMaterials = collection === "materials";
+  const isPeople = hasPersonProfile;
   const alertFilterLabel = isMaterials ? INVENTORY_ALERT_FILTER_LABELS[alertFilter] || "" : "";
+  const peopleAlertFilterLabel = isPeople ? PEOPLE_ALERT_FILTER_LABELS[alertFilter] || "" : "";
 
   const categoryOptions = isMaterials
     ? [...new Set((state.materials || []).map((item) => item.category || "Sin categoría"))].sort()
@@ -2876,7 +2900,14 @@ function CrudTable({ collection, config, alertFilter = "", onClearAlertFilter, f
             ? isCriticalStockItem(row)
             : true);
 
-      return matchesSearch && matchesCategory && matchesStock && matchesAlertFilter;
+      const matchesPeopleAlertFilter =
+        !isPeople ||
+        !alertFilter ||
+        (alertFilter === "blocked"
+          ? Boolean(getBlockReason(state.loans || [], personTypeByCollection[collection], row.id))
+          : true);
+
+      return matchesSearch && matchesCategory && matchesStock && matchesAlertFilter && matchesPeopleAlertFilter;
     })
     .sort((a, b) => {
       if (sortMode === "az") {
@@ -2912,11 +2943,11 @@ function CrudTable({ collection, config, alertFilter = "", onClearAlertFilter, f
     (selectedCategory !== "todos" ? 1 : 0) +
     (maxStock !== "" ? 1 : 0) +
     (sortMode !== "az" ? 1 : 0) +
-    (alertFilterLabel ? 1 : 0);
+    (alertFilterLabel || peopleAlertFilterLabel ? 1 : 0);
 
   useEffect(() => {
     setPage(1);
-  }, [alertFilter]);
+  }, [alertFilter, collection]);
 
   useEffect(() => {
     if (!focusedPerson?.id || !hasPersonProfile) return;
@@ -3150,10 +3181,10 @@ function CrudTable({ collection, config, alertFilter = "", onClearAlertFilter, f
       )}
 
       <div className="panel">
-        {alertFilterLabel && (
+        {(alertFilterLabel || peopleAlertFilterLabel) && (
           <div className="mb-4 flex flex-col gap-2 rounded-xl border border-yellow-300 bg-yellow-50 p-3 text-sm text-slate-800 md:flex-row md:items-center md:justify-between">
             <span>
-              <strong>Filtro desde alerta:</strong> {alertFilterLabel}. Mostrando {rows.length} registro(s).
+              <strong>Filtro desde alerta:</strong> {alertFilterLabel || peopleAlertFilterLabel}. Mostrando {rows.length} registro(s).
             </span>
             <Button
               variant="secondary"
@@ -3259,22 +3290,6 @@ function PersonProfileModal({ person, type, onClose }) {
   const requests = (state.requests || []).filter((request) => request.requesterId === person.id || normalizeHeader(request.requesterName) === normalizeHeader(person.name) || (person.email && normalizeHeader(request.requesterEmail || "") === normalizeHeader(person.email)));
   const messages = type === "teacher" ? (state.messages || []).filter((msg) => msg.teacherId === person.id) : [];
   const pendingReturnLoans = type === "teacher" ? getTeacherPendingReturnLoans(state.loans || [], person) : [];
-  const loanRows = loans.map((loan) => ({
-    folio: displayFolio(loan, "PRE"),
-    estado: loan.status,
-    fecha: loan.createdAt,
-    devolucion: loan.expectedReturn,
-    elementos: loan.items.map((item) => `${item.name} (${item.qty})`).join(", "),
-    observaciones: loan.notes || ""
-  }));
-  const requestRows = requests.map((request) => ({
-    folio: displayFolio(request, "SOL"),
-    estado: request.status,
-    fecha: request.createdAt,
-    requerida: request.expectedDate,
-    elementos: request.items.map((item) => `${item.name} (${item.qty})`).join(", "),
-    observaciones: request.notes || ""
-  }));
   const sendPendingEmail = async () => {
     if (!person.email || !pendingReturnLoans.length) return;
     setSendingPendingEmail(true);
@@ -3289,6 +3304,29 @@ function PersonProfileModal({ person, type, onClose }) {
   };
   const pendingNotice = getPendingLoanNotice(state.loans, type, person.id);
   const blockReason = getBlockReason(state.loans, type, person.id);
+  const renderHistoryCard = (record, kind) => {
+    const isLoan = kind === "loan";
+    const items = record.items?.map((item) => `${item.name} (${item.qty})`).join(", ") || "Sin elementos registrados";
+    const targetDate = isLoan ? record.expectedReturn : record.expectedDate;
+    return (
+      <article key={`${kind}-${record.id}`} className="rounded-2xl border border-slate-200 bg-white/82 p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:border-steel-700 dark:bg-steel-850/80">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <span className="text-sm font-black text-steel-950 dark:text-white">{displayFolio(record, isLoan ? "PRE" : "SOL")}</span>
+              <Badge tone={record.status === "activo" || record.status === "pendiente" ? "amber" : record.status === "rechazada" ? "red" : "green"}>{record.status}</Badge>
+            </div>
+            <p className="text-sm leading-6 text-slate-700 dark:text-slate-200">{items}</p>
+            {record.notes && <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Obs.: {record.notes}</p>}
+          </div>
+          <div className="grid min-w-[210px] gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 dark:border-steel-700 dark:bg-steel-950/35 dark:text-slate-300">
+            <span><strong>{isLoan ? "Entrega" : "Solicitud"}:</strong> {record.createdAt ? formatDate(record.createdAt) : "Sin fecha"}</span>
+            <span><strong>{isLoan ? "Devolución" : "Requerida"}:</strong> {targetDate ? formatDate(targetDate) : "Sin fecha"}</span>
+          </div>
+        </div>
+      </article>
+    );
+  };
   return (
     <Modal title={`Ficha rápida · ${person.name}`} onClose={onClose} wide>
       <div className="grid gap-5">
@@ -3324,19 +3362,34 @@ function PersonProfileModal({ person, type, onClose }) {
             <Button variant="secondary" disabled={!person.email || pendingReturnLoans.length === 0 || sendingPendingEmail} onClick={sendPendingEmail}><FileCheck size={16} />{sendingPendingEmail ? "Enviando..." : "Enviar correo"}</Button>
           </div>
         )}
-        <div className="grid gap-4 xl:grid-cols-2">
-          <section className="grid gap-3">
+        <section className="grid gap-3 rounded-2xl border border-steel-700 bg-white/55 p-4 dark:bg-steel-900/55">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="section-title"><ClipboardList size={18} />Préstamos</h3>
-            <DataTable rows={loanRows} columns={[["folio", "Folio"], ["estado", "Estado"], ["fecha", "Entrega"], ["devolucion", "Devolución"], ["elementos", "Elementos"], ["observaciones", "Obs."]]} compact />
-          </section>
-          <section className="grid gap-3">
+            <Badge tone={activeLoans.length ? "amber" : "green"}>{activeLoans.length} activo(s)</Badge>
+          </div>
+          <div className="grid gap-3">
+            {loans.length === 0 && <div className="rounded-xl border border-dashed border-slate-300 bg-white/60 p-5 text-center text-sm text-slate-500 dark:border-steel-700 dark:bg-steel-850/60 dark:text-slate-400">Sin préstamos registrados para esta persona.</div>}
+            {loans.map((loan) => renderHistoryCard(loan, "loan"))}
+          </div>
+        </section>
+        <section className="grid gap-3 rounded-2xl border border-steel-700 bg-white/55 p-4 dark:bg-steel-900/55">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="section-title"><Inbox size={18} />Solicitudes y mensajes</h3>
-            <div className="grid gap-3">
-              <DataTable rows={requestRows} columns={[["folio", "Folio"], ["estado", "Estado"], ["fecha", "Fecha"], ["requerida", "Requerida"], ["elementos", "Elementos"], ["observaciones", "Obs."]]} compact />
-              {type === "teacher" && <p className="text-sm text-slate-400">Mensajes registrados: <span className="font-semibold text-white">{messages.length}</span></p>}
+            <div className="flex flex-wrap gap-2">
+              <Badge tone={requests.length ? "blue" : "slate"}>{requests.length} solicitud(es)</Badge>
+              {type === "teacher" && <Badge tone={messages.length ? "green" : "slate"}>{messages.length} mensaje(s)</Badge>}
             </div>
-          </section>
-        </div>
+          </div>
+          <div className="grid gap-3">
+            {requests.length === 0 && <div className="rounded-xl border border-dashed border-slate-300 bg-white/60 p-5 text-center text-sm text-slate-500 dark:border-steel-700 dark:bg-steel-850/60 dark:text-slate-400">Sin solicitudes registradas para esta persona.</div>}
+            {requests.map((request) => renderHistoryCard(request, "request"))}
+            {type === "teacher" && messages.length > 0 && (
+              <div className="rounded-2xl border border-sky-200 bg-sky-50/80 p-4 text-sm text-slate-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-slate-200">
+                Mensajes registrados: <span className="font-black">{messages.length}</span>
+              </div>
+            )}
+          </div>
+        </section>
       </div>
     </Modal>
   );
@@ -3870,12 +3923,35 @@ function ReturnForm({ focusLoanId = "", alertFilter = "", onClearAlertFilter }) 
         {filtered.map((item) => {
           const expanded = loanId === item.id;
           const itemReturnables = item.items.filter((loanItem) => !loanItem.nonReturnable);
+          const requesterTone = item.requesterType === "student"
+            ? {
+                label: "Alumno",
+                badge: "blue",
+                open: "border-sky-400 bg-gradient-to-r from-sky-50 via-white to-blue-50 shadow-md dark:border-sky-500/60 dark:from-sky-500/15 dark:via-steel-900 dark:to-blue-500/10",
+                closed: "border-sky-200 bg-gradient-to-r from-white to-sky-50/70 hover:border-sky-300 dark:border-sky-500/25 dark:from-steel-850 dark:to-sky-500/10"
+              }
+            : item.requesterType === "staff"
+              ? {
+                  label: "Personal",
+                  badge: "green",
+                  open: "border-emerald-400 bg-gradient-to-r from-emerald-50 via-white to-teal-50 shadow-md dark:border-emerald-500/60 dark:from-emerald-500/15 dark:via-steel-900 dark:to-teal-500/10",
+                  closed: "border-emerald-200 bg-gradient-to-r from-white to-emerald-50/70 hover:border-emerald-300 dark:border-emerald-500/25 dark:from-steel-850 dark:to-emerald-500/10"
+                }
+              : {
+                  label: "Profesor",
+                  badge: "amber",
+                  open: "border-safety-500 bg-gradient-to-r from-yellow-50 via-white to-amber-50 shadow-md dark:border-safety-500/70 dark:from-safety-500/15 dark:via-steel-900 dark:to-amber-500/10",
+                  closed: "border-yellow-200 bg-gradient-to-r from-white to-yellow-50/70 hover:border-safety-500 dark:border-safety-500/25 dark:from-steel-850 dark:to-safety-500/10"
+                };
           return (
-            <div key={item.id} className={`overflow-hidden rounded-md border transition ${expanded ? "border-safety-500 bg-safety-500/10 shadow-md" : "border-steel-700 bg-steel-850 hover:bg-steel-800"}`}>
-              <button type="button" onClick={() => setLoanId(item.id)} className="w-full p-3 text-left">
+            <div key={item.id} className={`overflow-hidden rounded-md border transition ${expanded ? requesterTone.open : requesterTone.closed}`}>
+              <button type="button" onClick={() => setLoanId((current) => current === item.id ? "" : item.id)} className="w-full p-3 text-left">
                 <div className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
                   <div>
-                    <p className="font-bold text-white"><span className="text-safety-500">{displayFolio(item, "PRE")}</span> · {item.requesterName}</p>
+                    <div className="mb-1 flex flex-wrap items-center gap-2">
+                      <p className="font-bold text-slate-950 dark:text-white"><span className="text-safety-600 dark:text-safety-400">{displayFolio(item, "PRE")}</span> · {item.requesterName}</p>
+                      <Badge tone={requesterTone.badge}>{requesterTone.label}</Badge>
+                    </div>
                     <p className="text-sm text-slate-400">{item.items.map((loanItem) => `${loanItem.name} (${loanItem.qty}${loanItem.nonReturnable ? ", no retorna" : ""})`).join(", ")}</p>
                   </div>
                   <Badge tone={isOverdue(item) ? "red" : "amber"}>{isOverdue(item) ? `${overdueDays(item.expectedReturn)} días atraso` : `vence ${formatDate(item.expectedReturn)}`}</Badge>
