@@ -232,6 +232,16 @@ const isFungibleMaterial = (item) => {
   return item?.type === "material" && normalizeHeader(item.category || "").includes("fungible");
 };
 
+const INVENTORY_ALERT_FILTER_LABELS = {
+  "zero-stock": "Stock en cero",
+  "low-stock": "Stock bajo"
+};
+
+const LOAN_ALERT_FILTER_LABELS = {
+  overdue: "Préstamos vencidos",
+  "due-soon": "Préstamos por vencer"
+};
+
 const getBlockReason = (loans, requesterType, requesterId) => {
   if (requesterType === "teacher") return "";
   const pending = loans.find((loan) => loan.status === "activo" && personKey(loan.requesterType, loan.requesterId) === personKey(requesterType, requesterId) && (loan.partialReturn || isOverdue(loan)));
@@ -1126,7 +1136,7 @@ function GlobalSearch({ allowedSections = [], onSelect }) {
   };
 
   return (
-    <div className="global-search relative w-full md:max-w-xl">
+    <div className="global-search relative z-[1200] w-full md:max-w-xl">
       <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
       <input
         className={`${inputClass} h-10 pl-10`}
@@ -1144,7 +1154,7 @@ function GlobalSearch({ allowedSections = [], onSelect }) {
         placeholder="Buscar en todo el sistema"
       />
       {open && query.length >= 2 && (
-        <div className="absolute left-0 right-0 z-50 mt-2 max-h-96 overflow-auto rounded-lg border border-steel-700 bg-steel-900 p-2 shadow-2xl">
+        <div className="absolute left-0 right-0 z-[1300] mt-2 max-h-96 overflow-auto rounded-lg border border-steel-700 bg-steel-900 p-2 shadow-2xl">
           {results.length === 0 && <p className="px-3 py-4 text-center text-sm text-slate-400">Sin resultados</p>}
           {results.map((result) => (
             <button
@@ -1194,7 +1204,7 @@ const inputClass = "pc-input w-full rounded-md border border-steel-700 bg-steel-
 
 function Modal({ title, children, onClose, wide = false }) {
   return (
-    <div className="pc-modal-backdrop fixed inset-0 z-40 grid place-items-center bg-black/60 p-2 sm:p-4" onMouseDown={onClose}>
+    <div className="pc-modal-backdrop fixed inset-0 z-[1500] grid place-items-center bg-black/60 p-2 sm:p-4" onMouseDown={onClose}>
       <div className={`pc-modal-card max-h-[92vh] w-full ${wide ? "max-w-6xl" : "max-w-2xl"} overflow-auto rounded-lg border border-steel-700 bg-steel-900 shadow-2xl`} onMouseDown={(event) => event.stopPropagation()}>
         <div className="flex items-center justify-between gap-3 border-b border-steel-700 px-3 py-3 sm:px-5 sm:py-4">
           <h3 className="text-lg font-semibold text-white">{title}</h3>
@@ -1275,6 +1285,8 @@ function Layout({ section, setSection, currentUser, onLogout }) {
   const [keyPanelOpen, setKeyPanelOpen] = useState(false);
   const [loanInitialView, setLoanInitialView] = useState("loan");
   const [returnFocusLoanId, setReturnFocusLoanId] = useState("");
+  const [inventoryAlertFilter, setInventoryAlertFilter] = useState("");
+  const [loanAlertFilter, setLoanAlertFilter] = useState("");
   const nav = [
     ["dashboard", "Dashboard", LayoutDashboard],
     ["alerts", "Centro de alertas", Bell],
@@ -1314,18 +1326,53 @@ function Layout({ section, setSection, currentUser, onLogout }) {
   const unreadMessagesCount = (state.messages || []).filter((msg) => msg.from === "docente" && !msg.adminRead).length;
   const preparingRequestsCount = (state.requests || []).filter((request) => request.status === "en preparación").length;
   const criticalAdminAlerts = buildAdminAlerts(state).filter((alert) => ["crítica", "media"].includes(alert.priority) && alert.rows?.length).slice(0, 5);
+  const clearContextFilters = () => {
+    setInventoryAlertFilter("");
+    setLoanAlertFilter("");
+  };
+  const openSection = (id) => {
+    clearContextFilters();
+    setReturnFocusLoanId("");
+    if (id === "keys") {
+      setKeyPanelOpen(true);
+      return;
+    }
+    setKeyPanelOpen(false);
+    setSection(id);
+  };
+  const openAdminAlert = (alert) => {
+    const target = alert?.targetFilter;
+    if (target?.section === "inventory") {
+      setInventoryAlertFilter(target.filter || "");
+      setLoanAlertFilter("");
+      setReturnFocusLoanId("");
+      setKeyPanelOpen(false);
+      setSection("inventory");
+      return;
+    }
+    if (target?.section === "loans") {
+      setLoanAlertFilter(target.filter || "");
+      setInventoryAlertFilter("");
+      setKeyPanelOpen(false);
+      setLoanInitialView(target.view || "return");
+      setReturnFocusLoanId("");
+      setSection("loans");
+      return;
+    }
+    openSection(alert?.section || "alerts");
+  };
   const adminNotifications = [
     ...criticalAdminAlerts.map((alert) => ({
       title: alert.title,
       body: alert.body,
       actionLabel: alert.actionLabel || "Abrir alerta",
-      onOpen: () => setSection(alert.section || "alerts")
+      onOpen: () => openAdminAlert(alert)
     })),
     ...(state.requests || []).filter((request) => request.status === "pendiente").map((request) => ({
       title: "Solicitud docente pendiente",
       body: `${request.requesterName}: ${request.items.length} item(s)`,
       actionLabel: "Abrir solicitud",
-      onOpen: () => setSection("requests")
+      onOpen: () => openSection("requests")
     })),
     ...(state.messages || []).filter((msg) => msg.from === "docente" && !msg.adminRead).map((msg) => ({
       title: `Mensaje de ${msg.teacherName}`,
@@ -1333,7 +1380,7 @@ function Layout({ section, setSection, currentUser, onLogout }) {
       actionLabel: "Responder conversación",
       onOpen: () => {
         setFocusedTeacherId(msg.teacherId);
-        setSection("messages");
+        openSection("messages");
         dispatch({ type: "MARK_ADMIN_THREAD_READ", teacherId: msg.teacherId });
       }
     }))
@@ -1354,7 +1401,7 @@ function Layout({ section, setSection, currentUser, onLogout }) {
         </div>
         <nav className="space-y-1 p-4">
           {allowedNav.map(([id, label, Icon]) => (
-            <button key={id} onClick={() => id === "keys" ? setKeyPanelOpen(true) : setSection(id)} className={`flex w-full items-center gap-3 rounded-md px-4 py-3 text-left text-sm font-semibold transition ${section === id || (id === "keys" && keyPanelOpen) ? "bg-safety-500 text-steel-950" : "text-slate-300 hover:bg-steel-800"}`}>
+            <button key={id} onClick={() => openSection(id)} className={`flex w-full items-center gap-3 rounded-md px-4 py-3 text-left text-sm font-semibold transition ${section === id || (id === "keys" && keyPanelOpen) ? "bg-safety-500 text-steel-950" : "text-slate-300 hover:bg-steel-800"}`}>
               <Icon size={19} />{label}
             </button>
           ))}
@@ -1376,11 +1423,7 @@ function Layout({ section, setSection, currentUser, onLogout }) {
               allowedSections={currentUser?.permissions || []}
               onSelect={(result) => {
                 if (result.focusedTeacherId) setFocusedTeacherId(result.focusedTeacherId);
-                if (result.section === "keys") {
-                  setKeyPanelOpen(true);
-                  return;
-                }
-                setSection(result.section);
+                openSection(result.section);
               }}
             />
             <div className="mobile-actions flex flex-wrap items-center gap-2">
@@ -1394,7 +1437,7 @@ function Layout({ section, setSection, currentUser, onLogout }) {
             </div>
             <div className="pc-mobile-nav mobile-nav -mx-1 flex gap-2 overflow-x-auto px-1 pb-1 lg:hidden">
               {allowedNav.map(([id, label, Icon]) => (
-                <Button key={id} variant={section === id || (id === "keys" && keyPanelOpen) ? "primary" : "secondary"} onClick={() => id === "keys" ? setKeyPanelOpen(true) : setSection(id)} className="shrink-0 whitespace-nowrap">
+                <Button key={id} variant={section === id || (id === "keys" && keyPanelOpen) ? "primary" : "secondary"} onClick={() => openSection(id)} className="shrink-0 whitespace-nowrap">
                   <Icon size={16} />{label}
                 </Button>
               ))}
@@ -1410,26 +1453,30 @@ function Layout({ section, setSection, currentUser, onLogout }) {
                 {unreadMessagesCount > 0 && <Badge tone="green">{unreadMessagesCount} mensaje(s) nuevo(s)</Badge>}
               </div>
               <div className="flex flex-wrap gap-2">
-                {pendingRequestsCount > 0 && <Button onClick={() => setSection("requests")}><Inbox size={16} />Ver solicitudes</Button>}
-                {unreadMessagesCount > 0 && <Button variant="secondary" onClick={() => setSection("messages")}><MessageSquare size={16} />Abrir chat</Button>}
+                {pendingRequestsCount > 0 && <Button onClick={() => openSection("requests")}><Inbox size={16} />Ver solicitudes</Button>}
+                {unreadMessagesCount > 0 && <Button variant="secondary" onClick={() => openSection("messages")}><MessageSquare size={16} />Abrir chat</Button>}
               </div>
             </div>
           )}
           {section === "dashboard" && currentUser?.permissions?.includes("dashboard") && (
             <Dashboard
-              openKeys={() => setKeyPanelOpen(true)}
+              openKeys={() => openSection("keys")}
+              openAlert={openAdminAlert}
               openLoans={(view = "return", loanId = "") => {
+                setInventoryAlertFilter("");
+                setLoanAlertFilter("");
                 setLoanInitialView(view);
                 setReturnFocusLoanId(loanId);
+                setKeyPanelOpen(false);
                 setSection("loans");
               }}
             />
           )}
-          {section === "alerts" && <AdminAlertsCenter setSection={setSection} />}
+          {section === "alerts" && <AdminAlertsCenter setSection={setSection} onOpenAlert={openAdminAlert} />}
           {section === "people" && <People />}
-          {section === "inventory" && <Inventory />}
+          {section === "inventory" && <Inventory alertFilter={inventoryAlertFilter} onClearAlertFilter={() => setInventoryAlertFilter("")} />}
           {section === "workshop" && <WorkshopReservations currentUser={currentUser} />}
-          {section === "loans" && <Loans initialView={loanInitialView} returnFocusLoanId={returnFocusLoanId} />}
+          {section === "loans" && <Loans initialView={loanInitialView} returnFocusLoanId={returnFocusLoanId} alertFilter={loanAlertFilter} onClearAlertFilter={() => setLoanAlertFilter("")} />}
           {section === "requests" && <TeacherRequestsInbox />}
           {section === "messages" && <MessagesCenter focusedTeacherId={focusedTeacherId} />}
           {section === "assistant" && <AdminAssistant />}
@@ -1440,7 +1487,7 @@ function Layout({ section, setSection, currentUser, onLogout }) {
           {section === "settings" && <SettingsPage />}
         </main>
         {currentUser?.permissions?.includes("messages") && (
-          <button type="button" onClick={() => setSection("messages")} className="chat-fab fixed bottom-5 right-5 z-40 grid h-14 w-14 place-items-center rounded-full bg-safety-500 text-steel-950 shadow-2xl transition hover:bg-safety-600" title="Abrir chat">
+          <button type="button" onClick={() => openSection("messages")} className="chat-fab fixed bottom-5 right-5 z-40 grid h-14 w-14 place-items-center rounded-full bg-safety-500 text-steel-950 shadow-2xl transition hover:bg-safety-600" title="Abrir chat">
             <MessageSquare size={24} />
             {unreadMessagesCount > 0 && <span className="absolute -right-1 -top-1 grid h-6 min-w-6 place-items-center rounded-full bg-red-600 px-1 text-xs font-bold text-white">{unreadMessagesCount}</span>}
           </button>
@@ -1602,12 +1649,20 @@ function KeyControlModal({ onClose }) {
   );
 }
 
-function AdminAlertsCenter({ setSection }) {
+function AdminAlertsCenter({ setSection, onOpenAlert }) {
   const { state } = useApp();
   const [detail, setDetail] = useState(null);
   const alerts = buildAdminAlerts(state);
   const priorityTone = { crítica: "red", media: "amber", informativa: "blue", ok: "green" };
   const visibleAlerts = alerts.filter((alert) => alert.priority !== "ok" || alert.id === "messages");
+  const openAlert = (alert) => {
+    setDetail(null);
+    if (onOpenAlert) {
+      onOpenAlert(alert);
+      return;
+    }
+    setSection(alert.section || "dashboard");
+  };
   const grouped = [
     ["crítica", visibleAlerts.filter((alert) => alert.priority === "crítica")],
     ["media", visibleAlerts.filter((alert) => alert.priority === "media")],
@@ -1643,7 +1698,7 @@ function AdminAlertsCenter({ setSection }) {
                     </div>
                     <div className="mt-4 flex flex-wrap justify-end gap-2">
                       {alert.rows?.length > 0 && <Button variant="secondary" onClick={() => setDetail(alert)}><FileText size={16} />Ver detalle</Button>}
-                      <Button onClick={() => setSection(alert.section || "dashboard")}>{alert.actionLabel || "Abrir"}</Button>
+                      <Button onClick={() => openAlert(alert)}>{alert.actionLabel || "Abrir"}</Button>
                     </div>
                   </div>
                 ))}
@@ -1658,7 +1713,7 @@ function AdminAlertsCenter({ setSection }) {
           <DataTable rows={detail.rows || []} columns={detail.columns || []} compact />
           <div className="mt-4 flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setDetail(null)}>Cerrar</Button>
-            <Button onClick={() => { setDetail(null); setSection(detail.section || "dashboard"); }}>{detail.actionLabel || "Abrir módulo"}</Button>
+            <Button onClick={() => openAlert(detail)}>{detail.actionLabel || "Abrir módulo"}</Button>
           </div>
         </Modal>
       )}
@@ -1666,9 +1721,10 @@ function AdminAlertsCenter({ setSection }) {
   );
 }
 
-function Dashboard({ openLoans, openKeys }) {
+function Dashboard({ openLoans, openKeys, openAlert }) {
   const { state, dispatch, notify } = useApp();
   const [detail, setDetail] = useState(null);
+  const [alertDetail, setAlertDetail] = useState(null);
   const [movementDetail, setMovementDetail] = useState(null);
   const [lowStockCategory, setLowStockCategory] = useState("todas");
   const [lowStockMode, setLowStockMode] = useState("controlados");
@@ -1839,6 +1895,7 @@ const lowStockCategoryOptions = [
       ]
     }
   };
+  const dashboardAlertMap = Object.fromEntries(buildAdminAlerts(state).map((alert) => [alert.id, alert]));
 
   const movementFolio = movementDetail?.detail?.match(/\bPRE-\d{4}-\d{4}\b/)?.[0] || "";
 
@@ -2161,12 +2218,31 @@ const lowStockCategoryOptions = [
         </h2>
 
         <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-          <AlertTile label="Stock en cero" value={zeroStock.length} tone="red" />
-          <AlertTile label="Préstamos por vencer" value={dueSoon.length} tone="amber" />
-          <AlertTile label="Personas bloqueadas" value={blockedPeopleCount} tone="red" />
-          <AlertTile label="Herramientas no disponibles" value={unavailableTools.length} tone="amber" />
+          <AlertTile label="Stock en cero" value={zeroStock.length} tone="red" onClick={() => setAlertDetail(dashboardAlertMap["zero-stock"])} />
+          <AlertTile label="Préstamos por vencer" value={dueSoon.length} tone="amber" onClick={() => setAlertDetail(dashboardAlertMap["due-soon"])} />
+          <AlertTile label="Personas bloqueadas" value={blockedPeopleCount} tone="red" onClick={() => setAlertDetail(dashboardAlertMap.blocked)} />
+          <AlertTile label="Herramientas no disponibles" value={unavailableTools.length} tone="amber" onClick={() => setAlertDetail(dashboardAlertMap.tools)} />
         </div>
       </section>
+
+      {alertDetail && (
+        <Modal title={alertDetail.title} onClose={() => setAlertDetail(null)} wide>
+          <p className="mb-4 text-sm text-slate-400">{alertDetail.body}</p>
+          <DataTable rows={alertDetail.rows || []} columns={alertDetail.columns || []} compact />
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setAlertDetail(null)}>Cerrar</Button>
+            <Button
+              onClick={() => {
+                const target = alertDetail;
+                setAlertDetail(null);
+                openAlert?.(target);
+              }}
+            >
+              {alertDetail.actionLabel || "Abrir módulo"}
+            </Button>
+          </div>
+        </Modal>
+      )}
 
       <section className="dashboard-chart-row grid gap-3 xl:grid-cols-2">
         <ChartPanel title="Top 5 materiales solicitados">
@@ -2304,12 +2380,18 @@ function ChartPanel({ title, children }) {
   return <div className="panel dashboard-chart-panel"><h2 className="section-title"><BarChart3 size={18} />{title}</h2>{children}</div>;
 }
 
-function AlertTile({ label, value, tone }) {
+function AlertTile({ label, value, tone, onClick }) {
+  const className = `flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-left transition ${
+    tone === "red"
+      ? "border-red-500/35 bg-red-500/10 text-red-200 hover:border-red-400 hover:bg-red-500/15"
+      : "border-amber-500/35 bg-amber-500/10 text-amber-200 hover:border-amber-400 hover:bg-amber-500/15"
+  }`;
+
   return (
-    <div className={`flex items-center justify-between gap-3 rounded-md border px-3 py-2 ${tone === "red" ? "border-red-500/35 bg-red-500/10 text-red-200" : "border-amber-500/35 bg-amber-500/10 text-amber-200"}`}>
+    <button type="button" onClick={onClick} className={className}>
       <p className="text-sm font-semibold">{label}</p>
       <p className="text-2xl font-bold">{value}</p>
-    </div>
+    </button>
   );
 }
 
@@ -2438,6 +2520,7 @@ function buildAdminAlerts(state) {
       title: "Préstamos vencidos",
       body: overdue.length ? `${overdue.length} préstamo(s) necesitan gestión de devolución.` : "Sin préstamos vencidos.",
       section: "loans",
+      targetFilter: { section: "loans", view: "return", filter: "overdue" },
       actionLabel: "Ir a devoluciones",
       rows: overdue.map((loan) => ({ folio: displayFolio(loan, "PRE"), solicitante: loan.requesterName, fecha: loan.expectedReturn, atraso: overdueDays(loan.expectedReturn), items: loan.items.map((item) => `${item.name} (${item.qty})`).join(", ") })),
       columns: [["folio", "Folio"], ["solicitante", "Solicitante"], ["fecha", "Fecha esperada"], ["atraso", "Días"], ["items", "Ítems"]]
@@ -2448,6 +2531,7 @@ function buildAdminAlerts(state) {
       title: "Stock en cero",
       body: zeroStock.length ? `${zeroStock.length} material(es) no tienen unidades disponibles.` : "Sin materiales en cero.",
       section: "inventory",
+      targetFilter: { section: "inventory", filter: "zero-stock" },
       actionLabel: "Ver inventario",
       rows: zeroStock.map((item) => ({ name: item.name, code: item.code, stock: item.stock, minStock: item.minStock, location: item.location })),
       columns: [["name", "Material"], ["code", "Código"], ["stock", "Stock"], ["minStock", "Mínimo"], ["location", "Ubicación"]]
@@ -2458,6 +2542,7 @@ function buildAdminAlerts(state) {
       title: "Stock bajo",
       body: lowStock.length ? `${lowStock.length} material(es) están bajo el mínimo.` : "Stock crítico controlado.",
       section: "inventory",
+      targetFilter: { section: "inventory", filter: "low-stock" },
       actionLabel: "Revisar stock",
       rows: lowStock.map((item) => ({ name: item.name, code: item.code, stock: item.stock, minStock: item.minStock, location: item.location })),
       columns: [["name", "Material"], ["code", "Código"], ["stock", "Stock"], ["minStock", "Mínimo"], ["location", "Ubicación"]]
@@ -2468,6 +2553,7 @@ function buildAdminAlerts(state) {
       title: "Préstamos por vencer",
       body: dueSoon.length ? `${dueSoon.length} préstamo(s) vencen dentro de ${dueSoonDays} día(s).` : "Sin vencimientos próximos.",
       section: "loans",
+      targetFilter: { section: "loans", view: "return", filter: "due-soon" },
       actionLabel: "Ver préstamos",
       rows: dueSoon.map((loan) => ({ folio: displayFolio(loan, "PRE"), solicitante: loan.requesterName, fecha: loan.expectedReturn, items: loan.items.map((item) => `${item.name} (${item.qty})`).join(", ") })),
       columns: [["folio", "Folio"], ["solicitante", "Solicitante"], ["fecha", "Fecha esperada"], ["items", "Ítems"]]
@@ -2656,13 +2742,13 @@ function People() {
   );
 }
 
-function Inventory() {
+function Inventory({ alertFilter = "", onClearAlertFilter }) {
   const tab = "materials";
   const config = configs[tab];
 
   return (
     <div className="grid gap-5">
-      <CrudTable collection={tab} config={config} />
+      <CrudTable collection={tab} config={config} alertFilter={alertFilter} onClearAlertFilter={onClearAlertFilter} />
     </div>
   );
 }
@@ -2700,7 +2786,7 @@ function InventoryBulkPanel() {
 }
 
 
-function CrudTable({ collection, config }) {
+function CrudTable({ collection, config, alertFilter = "", onClearAlertFilter }) {
   const { state, dispatch, notify } = useApp();
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
@@ -2713,6 +2799,7 @@ function CrudTable({ collection, config }) {
 
   const hasPersonProfile = collection === "students" || collection === "teachers";
   const isMaterials = collection === "materials";
+  const alertFilterLabel = isMaterials ? INVENTORY_ALERT_FILTER_LABELS[alertFilter] || "" : "";
 
   const categoryOptions = isMaterials
     ? [...new Set((state.materials || []).map((item) => item.category || "Sin categoría"))].sort()
@@ -2743,7 +2830,18 @@ function CrudTable({ collection, config }) {
         maxStock === "" ||
         Number(row.stock || 0) <= stockLimit;
 
-      return matchesSearch && matchesCategory && matchesStock;
+      const matchesAlertFilter =
+        !isMaterials ||
+        !alertFilter ||
+        (alertFilter === "zero-stock"
+          ? isFungibleStockCategory(row) &&
+            row.criticalEnabled !== false &&
+            Number(row.stock || 0) <= 0
+          : alertFilter === "low-stock"
+            ? isCriticalStockItem(row)
+            : true);
+
+      return matchesSearch && matchesCategory && matchesStock && matchesAlertFilter;
     })
     .sort((a, b) => {
       if (sortMode === "az") {
@@ -2778,7 +2876,12 @@ function CrudTable({ collection, config }) {
   const activeFiltersCount =
     (selectedCategory !== "todos" ? 1 : 0) +
     (maxStock !== "" ? 1 : 0) +
-    (sortMode !== "az" ? 1 : 0);
+    (sortMode !== "az" ? 1 : 0) +
+    (alertFilterLabel ? 1 : 0);
+
+  useEffect(() => {
+    setPage(1);
+  }, [alertFilter]);
 
   const normalizeInventoryCategories = () => {
     const normalizeCategory = (value = "") => {
@@ -2986,6 +3089,7 @@ function CrudTable({ collection, config }) {
                     setMaxStock("");
                     setSelectedCategory("todos");
                     setSortMode("az");
+                    onClearAlertFilter?.();
                     setPage(1);
                   }}
                 >
@@ -3003,6 +3107,22 @@ function CrudTable({ collection, config }) {
       )}
 
       <div className="panel">
+        {alertFilterLabel && (
+          <div className="mb-4 flex flex-col gap-2 rounded-xl border border-yellow-300 bg-yellow-50 p-3 text-sm text-slate-800 md:flex-row md:items-center md:justify-between">
+            <span>
+              <strong>Filtro desde alerta:</strong> {alertFilterLabel}. Mostrando {rows.length} registro(s).
+            </span>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                onClearAlertFilter?.();
+                setPage(1);
+              }}
+            >
+              Quitar filtro
+            </Button>
+          </div>
+        )}
         <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="relative max-w-md flex-1">
             <Search className="pointer-events-none absolute left-3 top-2.5 text-slate-500" size={18} />
@@ -3194,16 +3314,20 @@ function EditEntityModal({ collection, config, initial, onClose, onSave }) {
   );
 }
 
-function Loans({ initialView = "loan", returnFocusLoanId = "" }) {
+function Loans({ initialView = "loan", returnFocusLoanId = "", alertFilter = "", onClearAlertFilter }) {
   const [view, setView] = useState(initialView);
   useEffect(() => setView(initialView), [initialView]);
+  const changeView = (id) => {
+    setView(id);
+    if (id !== "return") onClearAlertFilter?.();
+  };
   return (
     <div className="grid gap-5">
       <div className="flex flex-wrap gap-2">
-        {[["loan", PackagePlus, "Préstamo"], ["return", RotateCcw, "Devolución"], ["history", History, "Historial"], ["person", UserRound, "Historial por persona"]].map(([id, Icon, label]) => <Button key={id} variant={view === id ? "primary" : "secondary"} onClick={() => setView(id)}><Icon size={16} />{label}</Button>)}
+        {[["loan", PackagePlus, "Préstamo"], ["return", RotateCcw, "Devolución"], ["history", History, "Historial"], ["person", UserRound, "Historial por persona"]].map(([id, Icon, label]) => <Button key={id} variant={view === id ? "primary" : "secondary"} onClick={() => changeView(id)}><Icon size={16} />{label}</Button>)}
       </div>
       {view === "loan" && <LoanForm />}
-      {view === "return" && <ReturnForm focusLoanId={returnFocusLoanId} />}
+      {view === "return" && <ReturnForm focusLoanId={returnFocusLoanId} alertFilter={alertFilter} onClearAlertFilter={onClearAlertFilter} />}
       {view === "history" && <MovementHistory />}
       {view === "person" && <PersonHistory />}
     </div>
@@ -3616,13 +3740,23 @@ function LoanReviewModal({ loan, onClose, onConfirm }) {
   );
 }
 
-function ReturnForm({ focusLoanId = "" }) {
+function ReturnForm({ focusLoanId = "", alertFilter = "", onClearAlertFilter }) {
   const { state, dispatch, notify } = useApp();
   const active = state.loans.filter((l) => l.status === "activo");
+  const dueSoonDays = Number(state.settings?.loanDueSoonDays ?? 2);
   const [query, setQuery] = useState("");
   const [loanId, setLoanId] = useState(active[0]?.id || "");
-  const filtered = active.filter((loan) => `${loan.requesterName} ${loan.items.map((item) => `${item.name} ${item.code}`).join(" ")}`.toLowerCase().includes(query.toLowerCase()));
-  const loan = active.find((l) => l.id === loanId);
+  const filteredByAlert = active.filter((loan) => {
+    if (alertFilter === "overdue") return isOverdue(loan);
+    if (alertFilter === "due-soon") {
+      const days = Math.ceil((new Date(loan.expectedReturn) - new Date(today())) / 86400000);
+      return !isOverdue(loan) && days >= 0 && days <= dueSoonDays;
+    }
+    return true;
+  });
+  const alertFilterLabel = LOAN_ALERT_FILTER_LABELS[alertFilter] || "";
+  const filtered = filteredByAlert.filter((loan) => `${loan.requesterName} ${loan.items.map((item) => `${item.name} ${item.code}`).join(" ")}`.toLowerCase().includes(query.toLowerCase()));
+  const loan = filteredByAlert.find((l) => l.id === loanId) || active.find((l) => l.id === loanId);
   const returnableItems = loan?.items.filter((item) => !item.nonReturnable) || [];
   const [partial, setPartial] = useState(false);
   const [conditions, setConditions] = useState({});
@@ -3631,8 +3765,8 @@ function ReturnForm({ focusLoanId = "" }) {
       setLoanId(focusLoanId);
       return;
     }
-    setLoanId(active[0]?.id || "");
-  }, [focusLoanId, state.loans.length]);
+    setLoanId(filteredByAlert[0]?.id || "");
+  }, [focusLoanId, alertFilter, state.loans.length]);
   const submit = () => {
     if (!loan) return;
     dispatch({ type: "RETURN_LOAN", loanId, partial, operatorName: state.settings.operatorName, notes: "Registrado desde formulario", items: returnableItems.map((item) => ({ ...item, condition: conditions[item.id] || "disponible" })) });
@@ -3640,6 +3774,22 @@ function ReturnForm({ focusLoanId = "" }) {
   };
   return (
     <div className="panel grid gap-5">
+      {alertFilterLabel && (
+        <div className="flex flex-col gap-2 rounded-xl border border-yellow-300 bg-yellow-50 p-3 text-sm text-slate-800 md:flex-row md:items-center md:justify-between">
+          <span>
+            <strong>Filtro desde alerta:</strong> {alertFilterLabel}. Mostrando {filteredByAlert.length} solicitud(es).
+          </span>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              onClearAlertFilter?.();
+              setLoanId(active[0]?.id || "");
+            }}
+          >
+            Quitar filtro
+          </Button>
+        </div>
+      )}
       <div className="grid gap-4 md:grid-cols-[180px_1fr_220px]">
         <div className="rounded-md border border-steel-700 bg-steel-850 p-3">
           <p className="text-sm text-slate-400">Solicitudes activas</p>

@@ -433,6 +433,7 @@ body {
 .pc-topbar {
   background: rgba(255, 255, 255, 0.84) !important;
   border-color: var(--pc-line) !important;
+  z-index: 1100;
   box-shadow: 0 14px 35px rgba(13, 55, 111, 0.08);
   backdrop-filter: blur(20px);
 }
