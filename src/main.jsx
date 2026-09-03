@@ -538,6 +538,7 @@ function removeDemoData(state) {
 
 const AppContext = createContext(null);
 const CLOUD_STATE_ID = "panol-central-colegio-salesiano";
+const LOCAL_STATE_SYNC_CHANNEL = "panol-state-sync";
 
 function loadInitialState() {
   try {
@@ -560,7 +561,9 @@ function mergeRowsById(remoteRows = [], localRows = []) {
 function mergeCloudState(localState, remoteState) {
   const local = stripHeavyStudentPhotos(removeDemoData(localState || createEmptyState()));
   const remote = stripHeavyStudentPhotos(removeDemoData(remoteState || createEmptyState()));
-  const merged = { ...remote, ...local, settings: { ...(remote.settings || {}), ...(local.settings || {}) } };
+  const mergedSettings = { ...(remote.settings || {}), ...(local.settings || {}) };
+  if (remote.settings?.panolStatus) mergedSettings.panolStatus = remote.settings.panolStatus;
+  const merged = { ...remote, ...local, settings: mergedSettings };
   cloudMergeCollections.forEach((collection) => {
     merged[collection] = mergeRowsById(remote[collection] || [], local[collection] || []);
   });
@@ -579,6 +582,8 @@ function reducer(state, action) {
       return { ...state, backups: [action.backup, ...(state.backups || [])].slice(0, 50) };
     case "SET_SETTING":
       return { ...state, settings: { ...state.settings, [action.key]: action.value } };
+    case "APPLY_REMOTE_SETTINGS":
+      return { ...state, settings: { ...state.settings, ...(action.settings || {}) } };
     case "UPSERT_ENTITY": {
       const list = state[action.collection];
       const row = action.row.id ? action.row : { ...action.row, id: uid(action.prefix) };
@@ -808,7 +813,7 @@ function reducer(state, action) {
 }
 
 function auditEntryForAction(action, state) {
-  const ignored = new Set(["HYDRATE_STATE", "ADD_AUDIT", "REGISTER_BACKUP", "MARK_ADMIN_NOTIFICATIONS_READ", "MARK_ADMIN_THREAD_READ", "MARK_TEACHER_NOTIFICATIONS_READ", "MARK_TEACHER_THREAD_READ", "MARK_TEACHER_REQUEST_NOTIFIED"]);
+  const ignored = new Set(["HYDRATE_STATE", "ADD_AUDIT", "REGISTER_BACKUP", "APPLY_REMOTE_SETTINGS", "MARK_ADMIN_NOTIFICATIONS_READ", "MARK_ADMIN_THREAD_READ", "MARK_TEACHER_NOTIFICATIONS_READ", "MARK_TEACHER_THREAD_READ", "MARK_TEACHER_REQUEST_NOTIFIED"]);
   if (!action?.type || ignored.has(action.type)) return null;
   const labels = {
     SET_SETTING: `Ajuste modificado: ${action.key}`,
@@ -857,6 +862,9 @@ function AppProvider({ children }) {
   const [cloudStatus, setCloudStatus] = useState(isSupabaseConfigured ? "Esperando sesión segura" : "Modo local");
   const [cloudSession, setCloudSession] = useState(null);
   const cloudRevision = useRef(0);
+  const localSyncSource = useRef(`${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const lastLocalSettingsSnapshot = useRef("");
+  const skipNextCloudSave = useRef(false);
 
   useEffect(() => {
     if (!isSupabaseConfigured || !supabase) return;
@@ -918,14 +926,82 @@ function AppProvider({ children }) {
   }, [cloudSession?.access_token]);
 
   useEffect(() => {
+    const applyLiveSettings = (snapshot) => {
+      if (!snapshot) return;
+      try {
+        const incoming = removeDemoData(JSON.parse(snapshot));
+        const settings = incoming?.settings || {};
+        const settingsSnapshot = JSON.stringify(settings);
+        if (!settingsSnapshot || settingsSnapshot === lastLocalSettingsSnapshot.current) return;
+        lastLocalSettingsSnapshot.current = settingsSnapshot;
+        skipNextCloudSave.current = true;
+        rawDispatch({ type: "APPLY_REMOTE_SETTINGS", settings });
+      } catch (error) {
+        console.error("No se pudo aplicar estado en vivo", error);
+      }
+    };
+
+    const handleStorage = (event) => {
+      if (event.key === STORAGE_KEY && event.newValue) applyLiveSettings(event.newValue);
+    };
+
+    const channel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel(LOCAL_STATE_SYNC_CHANNEL) : null;
+    const handleMessage = (event) => {
+      if (event.data?.source === localSyncSource.current) return;
+      applyLiveSettings(event.data?.snapshot);
+    };
+
+    window.addEventListener("storage", handleStorage);
+    channel?.addEventListener("message", handleMessage);
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      channel?.removeEventListener("message", handleMessage);
+      channel?.close();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !supabase || !cloudSession) return;
+    const channel = supabase
+      .channel(`app-state-live-${CLOUD_STATE_ID}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "app_state", filter: `id=eq.${CLOUD_STATE_ID}` }, (payload) => {
+        const remoteState = payload.new?.data;
+        const revision = Number(payload.new?.revision || 0);
+        if (!remoteState?.settings || revision <= cloudRevision.current) return;
+        cloudRevision.current = revision;
+        lastLocalSettingsSnapshot.current = JSON.stringify(remoteState.settings || {});
+        skipNextCloudSave.current = true;
+        rawDispatch({ type: "APPLY_REMOTE_SETTINGS", settings: remoteState.settings });
+        setCloudStatus("Base central actualizada en vivo");
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [cloudSession?.access_token]);
+
+  useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(stripHeavyStudentPhotos(state)));
+      const localState = stripHeavyStudentPhotos(state);
+      const snapshot = JSON.stringify(localState);
+      localStorage.setItem(STORAGE_KEY, snapshot);
+      lastLocalSettingsSnapshot.current = JSON.stringify(localState.settings || {});
+      if (typeof BroadcastChannel !== "undefined") {
+        const channel = new BroadcastChannel(LOCAL_STATE_SYNC_CHANNEL);
+        channel.postMessage({ source: localSyncSource.current, snapshot });
+        channel.close();
+      }
     } catch (error) {
       console.error("No se pudo guardar estado local", error);
     }
   }, [state]);
   useEffect(() => {
     if (!isSupabaseConfigured || !supabase || !cloudReady || !cloudSession) return;
+    if (skipNextCloudSave.current) {
+      skipNextCloudSave.current = false;
+      return;
+    }
     const handle = setTimeout(async () => {
       const persistedState = stripHeavyStudentPhotos(state);
       const nextRevision = cloudRevision.current + 1;
