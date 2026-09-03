@@ -1230,12 +1230,12 @@ const inputClass = "pc-input w-full rounded-md border border-steel-700 bg-steel-
 function Modal({ title, children, onClose, wide = false }) {
   return (
     <div className="pc-modal-backdrop fixed inset-0 z-[1500] grid place-items-center bg-black/60 p-2 sm:p-4" onMouseDown={onClose}>
-      <div className={`pc-modal-card max-h-[88vh] w-full ${wide ? "max-w-[min(1180px,calc(100vw-2rem))]" : "max-w-2xl"} overflow-auto rounded-lg border border-steel-700 bg-steel-900 shadow-2xl`} onMouseDown={(event) => event.stopPropagation()}>
-        <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-3 py-3 dark:border-steel-700 sm:px-5 sm:py-4">
+      <div className={`pc-modal-card flex max-h-[calc(100dvh-1.5rem)] min-h-0 w-full ${wide ? "max-w-[min(1180px,calc(100vw-2rem))]" : "max-w-2xl"} flex-col overflow-hidden rounded-lg border border-steel-700 bg-steel-900 shadow-2xl`} onMouseDown={(event) => event.stopPropagation()}>
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 px-3 py-3 dark:border-steel-700 sm:px-5 sm:py-4">
           <h3 className="text-lg font-semibold text-slate-950 dark:text-white">{title}</h3>
           <Button variant="ghost" onClick={onClose} className="px-2"><X size={18} /></Button>
         </div>
-        <div className="p-3 sm:p-5">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-5">{children}</div>
       </div>
     </div>
   );
@@ -3424,7 +3424,10 @@ function EditEntityModal({ collection, config, initial, onClose, onSave }) {
           <Field key={key} label={label}><input className={inputClass} type={type || "text"} value={form[key] || ""} onChange={(e) => setForm({ ...form, [key]: type === "number" ? Number(e.target.value) : e.target.value })} /></Field>
         ))}
       </div>
-      <div className="mt-5 flex justify-end gap-2"><Button variant="secondary" onClick={onClose}>Cancelar</Button><Button onClick={() => onSave(form)}><Save size={16} />Guardar</Button></div>
+      <div className="sticky bottom-0 -mx-3 -mb-3 mt-5 flex justify-end gap-2 border-t border-slate-200 bg-white/95 px-3 py-3 backdrop-blur dark:border-steel-700 dark:bg-steel-900/95 sm:-mx-5 sm:-mb-5 sm:px-5">
+        <Button variant="secondary" onClick={onClose}>Cancelar</Button>
+        <Button onClick={() => onSave(form)}><Save size={16} />Guardar</Button>
+      </div>
     </Modal>
   );
 }
@@ -4202,8 +4205,23 @@ function MovementHistory() {
   const { state } = useApp();
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("todos");
-  const rows = state.movements.filter((m) => (status === "todos" || m.status === status) && JSON.stringify(m).toLowerCase().includes(query.toLowerCase()));
-  return <div className="panel"><Filters query={query} setQuery={setQuery} status={status} setStatus={setStatus} /><DataTable rows={rows} columns={[["date", "Fecha"], ["type", "Tipo"], ["detail", "Detalle"], ["requesterName", "Solicitante"], ["status", "Estado"]]} /></div>;
+  const loanById = Object.fromEntries((state.loans || []).map((loan) => [loan.id, loan]));
+  const rows = state.movements
+    .map((movement) => {
+      const loan = movement.loanId ? loanById[movement.loanId] : null;
+      const detailText = loan?.items?.length
+        ? loan.items.map((item) => `${item.name} (${item.qty}${item.nonReturnable ? ", no retorna" : ""})`).join(", ")
+        : movement.detail;
+
+      return { ...movement, detailText };
+    })
+    .filter((movement) => {
+      const matchesStatus = status === "todos" || movement.status === status;
+      const matchesQuery = JSON.stringify(movement).toLowerCase().includes(query.toLowerCase());
+      return matchesStatus && matchesQuery;
+    });
+
+  return <div className="panel"><Filters query={query} setQuery={setQuery} status={status} setStatus={setStatus} /><DataTable rows={rows} columns={[["date", "Fecha"], ["type", "Tipo"], ["detailText", "Detalle"], ["requesterName", "Solicitante"], ["status", "Estado"]]} /></div>;
 }
 
 function PersonHistory() {
