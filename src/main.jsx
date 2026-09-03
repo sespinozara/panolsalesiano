@@ -286,6 +286,7 @@ const PANOL_STATUS_OPTIONS = {
 };
 
 const getPanolStatus = (settings = {}) => PANOL_STATUS_OPTIONS[settings.panolStatus] || PANOL_STATUS_OPTIONS.available;
+const publicStatusSettingKeys = ["panolStatus", "panolStatusNote"];
 
 const getBlockingLoan = (loans, requesterType, requesterId) => {
   if (requesterType === "teacher") return "";
@@ -482,7 +483,7 @@ const defaultWorkshopTeacherEmails = [
 
 function createEmptyState() {
   return {
-    settings: { criticalThreshold: 5, theme: "dark", operatorName: "Encargado de pañol", operatorRole: "pañolero", panolStatus: "available" },
+    settings: { criticalThreshold: 5, theme: "dark", operatorName: "Encargado de pañol", operatorRole: "pañolero", panolStatus: "available", panolStatusNote: "" },
     appUsers: [defaultAdminUser],
     students: [],
     teachers: [],
@@ -562,7 +563,9 @@ function mergeCloudState(localState, remoteState) {
   const local = stripHeavyStudentPhotos(removeDemoData(localState || createEmptyState()));
   const remote = stripHeavyStudentPhotos(removeDemoData(remoteState || createEmptyState()));
   const mergedSettings = { ...(remote.settings || {}), ...(local.settings || {}) };
-  if (remote.settings?.panolStatus) mergedSettings.panolStatus = remote.settings.panolStatus;
+  publicStatusSettingKeys.forEach((key) => {
+    if (remote.settings?.[key] !== undefined) mergedSettings[key] = remote.settings[key];
+  });
   const merged = { ...remote, ...local, settings: mergedSettings };
   cloudMergeCollections.forEach((collection) => {
     merged[collection] = mergeRowsById(remote[collection] || [], local[collection] || []);
@@ -982,6 +985,43 @@ function AppProvider({ children }) {
   }, [cloudSession?.access_token]);
 
   useEffect(() => {
+    if (!isSupabaseConfigured || !supabase || !cloudSession) return;
+    let cancelled = false;
+    let timeoutId = null;
+
+    const pollPublicSettings = async () => {
+      const { data, error } = await supabase
+        .from("app_state")
+        .select("data, revision")
+        .eq("id", CLOUD_STATE_ID)
+        .maybeSingle();
+
+      if (cancelled) return;
+      if (!error && data?.data?.settings) {
+        const revision = Number(data.revision || 0);
+        if (revision > cloudRevision.current) {
+          cloudRevision.current = revision;
+          const remotePublicSettings = publicStatusSettingKeys.reduce((acc, key) => {
+            if (data.data.settings[key] !== undefined) acc[key] = data.data.settings[key];
+            return acc;
+          }, {});
+          lastLocalSettingsSnapshot.current = JSON.stringify(data.data.settings || {});
+          skipNextCloudSave.current = true;
+          rawDispatch({ type: "APPLY_REMOTE_SETTINGS", settings: remotePublicSettings });
+          setCloudStatus("Base central actualizada en vivo");
+        }
+      }
+      timeoutId = window.setTimeout(pollPublicSettings, 3000);
+    };
+
+    timeoutId = window.setTimeout(pollPublicSettings, 3000);
+    return () => {
+      cancelled = true;
+      if (timeoutId) window.clearTimeout(timeoutId);
+    };
+  }, [cloudSession?.access_token]);
+
+  useEffect(() => {
     try {
       const localState = stripHeavyStudentPhotos(state);
       const snapshot = JSON.stringify(localState);
@@ -1102,8 +1142,9 @@ function Badge({ children, tone = "slate" }) {
   return <span className={`inline-flex items-center rounded-md border px-2 py-1 text-xs font-medium ${tones[tone]}`}>{children}</span>;
 }
 
-function PanolStatusCard({ statusKey = "available", onToggle, compact = false }) {
+function PanolStatusCard({ statusKey = "available", statusNote = "", onToggle, compact = false }) {
   const status = getPanolStatus({ panolStatus: statusKey });
+  const note = String(statusNote || "").trim();
   const toneClasses = {
     green: "border-emerald-300 bg-gradient-to-r from-emerald-500 via-green-400 to-lime-300 text-emerald-950 shadow-emerald-400/30",
     amber: "border-amber-300 bg-gradient-to-r from-amber-300 via-yellow-200 to-orange-200 text-amber-950 shadow-amber-400/30",
@@ -1115,7 +1156,7 @@ function PanolStatusCard({ statusKey = "available", onToggle, compact = false })
       onClick={onToggle}
       disabled={!onToggle}
       className={`group relative overflow-hidden rounded-2xl border px-5 py-4 text-left shadow-2xl transition ${toneClasses[status.tone]} ${onToggle ? "hover:-translate-y-0.5 hover:shadow-[0_24px_60px_rgba(16,185,129,0.25)]" : "cursor-default"} ${compact ? "" : "min-h-[118px]"}`}
-      title={onToggle ? "Cambiar estado del pañol" : status.teacherMessage}
+      title={onToggle ? "Cambiar estado del pañol" : note || status.teacherMessage}
     >
       <span className="absolute inset-y-0 right-0 w-1/2 bg-white/25 blur-2xl transition group-hover:translate-x-4" />
       <span className="relative flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -1126,6 +1167,7 @@ function PanolStatusCard({ statusKey = "available", onToggle, compact = false })
           </span>
           <span className={`${compact ? "text-2xl" : "text-3xl sm:text-4xl"} mt-1 block font-black`}>{status.label}</span>
           <span className="mt-1 block text-sm font-semibold opacity-80">{status.teacherMessage}</span>
+          {note && <span className="mt-2 block rounded-xl border border-white/35 bg-white/35 px-3 py-2 text-sm font-black">{note}</span>}
         </span>
         {onToggle && <span className="rounded-xl border border-white/40 bg-white/35 px-3 py-2 text-sm font-black">Cambiar</span>}
       </span>
@@ -2121,7 +2163,17 @@ const lowStockCategoryOptions = [
         ))}
       </section>
 
-      <PanolStatusCard statusKey={panolStatusKey} onToggle={togglePanolStatus} />
+      <PanolStatusCard statusKey={panolStatusKey} statusNote={state.settings.panolStatusNote} onToggle={togglePanolStatus} />
+      <div className="panel grid gap-2">
+        <Field label="Comentario visible para docentes">
+          <input
+            className={inputClass}
+            value={state.settings.panolStatusNote || ""}
+            onChange={(event) => dispatch({ type: "SET_SETTING", key: "panolStatusNote", value: event.target.value })}
+            placeholder="Ej: Estoy en la sala de electrónica hasta las 10:30"
+          />
+        </Field>
+      </div>
 
       {detail && (
         <Modal
@@ -4513,7 +4565,7 @@ function TeacherPortal() {
   return (
     <div className="grid gap-6 xl:grid-cols-[.9fr_1.1fr]">
       <div className="xl:col-span-2">
-        <PanolStatusCard statusKey={panolStatusKey} compact />
+        <PanolStatusCard statusKey={panolStatusKey} statusNote={state.settings.panolStatusNote} compact />
       </div>
       <div className="panel grid gap-4">
         <div className="flex items-start justify-between gap-3">
@@ -6310,7 +6362,7 @@ function SettingsPage() {
       </div>
       <div className="mt-6 grid gap-3 rounded-md border border-steel-700 bg-steel-850 p-4">
         <h3 className="section-title mb-0"><Check size={18} />Estado público del pañol</h3>
-        <PanolStatusCard statusKey={state.settings.panolStatus || "available"} compact />
+        <PanolStatusCard statusKey={state.settings.panolStatus || "available"} statusNote={state.settings.panolStatusNote} compact />
         <div className="flex flex-wrap gap-2">
           {Object.entries(PANOL_STATUS_OPTIONS).map(([key, option]) => (
             <Button
@@ -6322,6 +6374,14 @@ function SettingsPage() {
             </Button>
           ))}
         </div>
+        <Field label="Comentario público para docentes">
+          <textarea
+            className={inputClass}
+            value={state.settings.panolStatusNote || ""}
+            onChange={(e) => dispatch({ type: "SET_SETTING", key: "panolStatusNote", value: e.target.value })}
+            placeholder="Ej: Estoy en la sala de electrónica hasta las 10:30"
+          />
+        </Field>
       </div>
       <div className="mt-6 rounded-md border border-steel-700 bg-steel-850 p-4">
         <h3 className="section-title"><ShieldCheck size={18} />Reglas operativas</h3>
@@ -7012,7 +7072,7 @@ function TeacherWorkspace({ currentUser, onLogout }) {
             <Check className="mr-2 inline" size={16} />Agregado al carrito: {lastAdded}
           </div>
         )}
-        <PanolStatusCard statusKey={panolStatusKey} compact />
+        <PanolStatusCard statusKey={panolStatusKey} statusNote={state.settings.panolStatusNote} compact />
         {state.settings.teacherReturnReminder !== "apagado" && pendingReturnLoans.length > 0 && returnReminderOpen && (
           <Modal title="ATENTO: devoluciones pendientes" onClose={() => setReturnReminderOpen(false)} wide>
             <div className="grid gap-4">
