@@ -261,9 +261,41 @@ const PEOPLE_ALERT_FILTER_LABELS = {
   blocked: "Personas bloqueadas"
 };
 
-const getBlockReason = (loans, requesterType, requesterId) => {
+const PANOL_STATUS_OPTIONS = {
+  available: {
+    label: "Pañol disponible",
+    shortLabel: "Disponible",
+    teacherMessage: "Pañol se encuentra disponible para retiro o consultas.",
+    next: "away",
+    tone: "green"
+  },
+  away: {
+    label: "Pañol ausente",
+    shortLabel: "Ausente",
+    teacherMessage: "Pañol está momentáneamente ausente. Evita enviar alumnos hasta nuevo aviso.",
+    next: "closed",
+    tone: "amber"
+  },
+  closed: {
+    label: "Pañol no disponible",
+    shortLabel: "No disponible",
+    teacherMessage: "Pañol no está disponible para atención en este momento.",
+    next: "available",
+    tone: "red"
+  }
+};
+
+const getPanolStatus = (settings = {}) => PANOL_STATUS_OPTIONS[settings.panolStatus] || PANOL_STATUS_OPTIONS.available;
+
+const getBlockingLoan = (loans, requesterType, requesterId) => {
   if (requesterType === "teacher") return "";
-  const pending = loans.find((loan) => loan.status === "activo" && personKey(loan.requesterType, loan.requesterId) === personKey(requesterType, requesterId) && (loan.partialReturn || isOverdue(loan)));
+  return loans.find((loan) => loan.status === "activo" && personKey(loan.requesterType, loan.requesterId) === personKey(requesterType, requesterId) && (loan.partialReturn || isOverdue(loan))) || null;
+};
+
+const getLoanItemsText = (loan) => (loan?.items || []).map((item) => `${item.name} (${item.qty}${item.nonReturnable ? ", no retorna" : ""})`).join(", ");
+
+const getBlockReason = (loans, requesterType, requesterId) => {
+  const pending = getBlockingLoan(loans, requesterType, requesterId);
   if (!pending) return "";
   if (pending.partialReturn) return `Bloqueado por devolución parcial pendiente del ${formatDate(pending.returnedAt || pending.createdAt)}.`;
   return `Bloqueado por préstamo vencido desde ${formatDate(pending.expectedReturn)} (${overdueDays(pending.expectedReturn)} días de atraso).`;
@@ -450,7 +482,7 @@ const defaultWorkshopTeacherEmails = [
 
 function createEmptyState() {
   return {
-    settings: { criticalThreshold: 5, theme: "dark", operatorName: "Encargado de pañol", operatorRole: "pañolero" },
+    settings: { criticalThreshold: 5, theme: "dark", operatorName: "Encargado de pañol", operatorRole: "pañolero", panolStatus: "available" },
     appUsers: [defaultAdminUser],
     students: [],
     teachers: [],
@@ -992,6 +1024,37 @@ function Badge({ children, tone = "slate" }) {
     blue: "bg-sky-500/12 text-sky-300 border-sky-500/30"
   };
   return <span className={`inline-flex items-center rounded-md border px-2 py-1 text-xs font-medium ${tones[tone]}`}>{children}</span>;
+}
+
+function PanolStatusCard({ statusKey = "available", onToggle, compact = false }) {
+  const status = getPanolStatus({ panolStatus: statusKey });
+  const toneClasses = {
+    green: "border-emerald-300 bg-gradient-to-r from-emerald-500 via-green-400 to-lime-300 text-emerald-950 shadow-emerald-400/30",
+    amber: "border-amber-300 bg-gradient-to-r from-amber-300 via-yellow-200 to-orange-200 text-amber-950 shadow-amber-400/30",
+    red: "border-red-300 bg-gradient-to-r from-red-500 via-rose-400 to-orange-300 text-red-950 shadow-red-400/30"
+  };
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      disabled={!onToggle}
+      className={`group relative overflow-hidden rounded-2xl border px-5 py-4 text-left shadow-2xl transition ${toneClasses[status.tone]} ${onToggle ? "hover:-translate-y-0.5 hover:shadow-[0_24px_60px_rgba(16,185,129,0.25)]" : "cursor-default"} ${compact ? "" : "min-h-[118px]"}`}
+      title={onToggle ? "Cambiar estado del pañol" : status.teacherMessage}
+    >
+      <span className="absolute inset-y-0 right-0 w-1/2 bg-white/25 blur-2xl transition group-hover:translate-x-4" />
+      <span className="relative flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <span>
+          <span className="flex items-center gap-2 text-sm font-black uppercase tracking-wide">
+            <span className={`h-3 w-3 rounded-full ${status.tone === "green" ? "bg-emerald-900" : status.tone === "amber" ? "bg-amber-900" : "bg-red-950"} shadow`} />
+            Estado pañol
+          </span>
+          <span className={`${compact ? "text-2xl" : "text-3xl sm:text-4xl"} mt-1 block font-black`}>{status.label}</span>
+          <span className="mt-1 block text-sm font-semibold opacity-80">{status.teacherMessage}</span>
+        </span>
+        {onToggle && <span className="rounded-xl border border-white/40 bg-white/35 px-3 py-2 text-sm font-black">Cambiar</span>}
+      </span>
+    </button>
+  );
 }
 
 function NotificationsBell({ notifications, onMarkRead }) {
@@ -1771,6 +1834,12 @@ function Dashboard({ openLoans, openKeys, openAlert }) {
   const [lowStockCategory, setLowStockCategory] = useState("todas");
   const [lowStockMode, setLowStockMode] = useState("controlados");
   const [editingMaterial, setEditingMaterial] = useState(null);
+  const panolStatusKey = state.settings?.panolStatus || "available";
+  const panolStatus = getPanolStatus(state.settings);
+  const togglePanolStatus = () => {
+    dispatch({ type: "SET_SETTING", key: "panolStatus", value: panolStatus.next });
+    notify(`Estado actualizado: ${PANOL_STATUS_OPTIONS[panolStatus.next].shortLabel}`);
+  };
 
   const activeLoans = state.loans.filter((l) => l.status === "activo");
   const overdue = activeLoans.filter(isOverdue);
@@ -1802,32 +1871,12 @@ const lowStockCategoryOptions = [
     return matchesCategory && matchesMode;
   });
 
-  const dueSoon = activeLoans.filter((loan) => {
-    const days = Math.ceil((new Date(loan.expectedReturn) - new Date(today())) / 86400000);
-    return days >= 0 && days <= 1;
-  });
-
-  const zeroStock = state.materials.filter((m) => {
-  const category = normalizeHeader(m?.category || "");
-
-  const isFungible =
-    category.includes("fungible") ||
-    category.includes("material fungible");
-
-  return (
-    isFungible &&
-    m.criticalEnabled !== false &&
-    Number(m.stock || 0) <= 0
-  );
-});
-
-  const unavailableTools = state.tools.filter((tool) =>
-    ["en reparación", "dañado", "perdido", "dado de baja"].includes(tool.status)
-  );
+  const unavailableTools = state.tools.filter((tool) => tool.status !== "disponible");
 
   const blockedPeopleCount = [
     ...state.students.map((p) => ["student", p.id]),
-    ...state.teachers.map((p) => ["teacher", p.id])
+    ...state.teachers.map((p) => ["teacher", p.id]),
+    ...(state.staff || []).map((p) => ["staff", p.id])
   ].filter(([type, id]) => getBlockReason(state.loans, type, id)).length;
 
   const totalStockRows = state.materials.map((m) => ({
@@ -1995,6 +2044,8 @@ const lowStockCategoryOptions = [
           </button>
         ))}
       </section>
+
+      <PanolStatusCard statusKey={panolStatusKey} onToggle={togglePanolStatus} />
 
       {detail && (
         <Modal
@@ -2259,9 +2310,7 @@ const lowStockCategoryOptions = [
           Alertas inteligentes
         </h2>
 
-        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-          <AlertTile label="Stock en cero" value={zeroStock.length} tone="red" onClick={() => setAlertDetail(dashboardAlertMap["zero-stock"])} />
-          <AlertTile label="Préstamos por vencer" value={dueSoon.length} tone="amber" onClick={() => setAlertDetail(dashboardAlertMap["due-soon"])} />
+        <div className="grid gap-2 md:grid-cols-2">
           <AlertTile label="Personas bloqueadas" value={blockedPeopleCount} tone="red" onClick={() => setAlertDetail(dashboardAlertMap.blocked)} />
           <AlertTile label="Herramientas no disponibles" value={unavailableTools.length} tone="amber" onClick={() => setAlertDetail(dashboardAlertMap.tools)} />
         </div>
@@ -2629,8 +2678,18 @@ function buildAdminAlerts(state) {
       section: "people",
       targetFilter: { section: "people", filter: "blocked" },
       actionLabel: "Ver personas",
-      rows: blockedPeople.map((person) => ({ nombre: person.name, tipo: person.typeLabel, motivo: person.blockReason })),
-      columns: [["nombre", "Nombre"], ["tipo", "Tipo"], ["motivo", "Motivo"]]
+      rows: blockedPeople.map((person) => {
+        const blockingLoan = getBlockingLoan(state.loans || [], person.requesterType, person.id);
+        return {
+          nombre: person.name,
+          tipo: person.typeLabel,
+          curso: person.course || person.department || person.role || "Sin curso",
+          debe: getLoanItemsText(blockingLoan) || "Sin detalle de elementos",
+          atraso: blockingLoan?.expectedReturn ? `${overdueDays(blockingLoan.expectedReturn)} día(s)` : "",
+          motivo: person.blockReason
+        };
+      }),
+      columns: [["nombre", "Nombre"], ["tipo", "Tipo"], ["curso", "Curso/área"], ["debe", "Debe devolver"], ["atraso", "Atraso"], ["motivo", "Motivo"]]
     },
     {
       id: "tools",
@@ -4350,6 +4409,7 @@ function TeacherPortal() {
   const filteredItems = availableItems.filter((item) => `${item.name} ${item.code} ${item.category || ""}`.toLowerCase().includes(itemQuery.toLowerCase())).slice(0, 8);
   const myRequests = teacher ? (state.requests || []).filter((request) => request.requesterId === teacher.id) : [];
   const myLoans = teacher ? state.loans.filter((loan) => loan.requesterType === "teacher" && loan.requesterId === teacher.id) : [];
+  const panolStatusKey = state.settings?.panolStatus || "available";
 
   if (!teacher) return <PortalLogin onLogin={(id) => { sessionStorage.setItem(PORTAL_SESSION_KEY, id); setSessionId(id); }} />;
 
@@ -4376,6 +4436,9 @@ function TeacherPortal() {
   };
   return (
     <div className="grid gap-6 xl:grid-cols-[.9fr_1.1fr]">
+      <div className="xl:col-span-2">
+        <PanolStatusCard statusKey={panolStatusKey} compact />
+      </div>
       <div className="panel grid gap-4">
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -6169,6 +6232,21 @@ function SettingsPage() {
         <Field label="Responsable activo"><input className={inputClass} value={state.settings.operatorName || ""} onChange={(e) => dispatch({ type: "SET_SETTING", key: "operatorName", value: e.target.value })} /></Field>
         <Field label="Rol de usuario"><select className={inputClass} value={state.settings.operatorRole || "pañolero"} onChange={(e) => dispatch({ type: "SET_SETTING", key: "operatorRole", value: e.target.value })}><option value="administrador">Administrador</option><option value="pañolero">Pañolero</option><option value="profesor">Profesor consultor</option><option value="lectura">Solo lectura</option></select></Field>
       </div>
+      <div className="mt-6 grid gap-3 rounded-md border border-steel-700 bg-steel-850 p-4">
+        <h3 className="section-title mb-0"><Check size={18} />Estado público del pañol</h3>
+        <PanolStatusCard statusKey={state.settings.panolStatus || "available"} compact />
+        <div className="flex flex-wrap gap-2">
+          {Object.entries(PANOL_STATUS_OPTIONS).map(([key, option]) => (
+            <Button
+              key={key}
+              variant={(state.settings.panolStatus || "available") === key ? "primary" : "secondary"}
+              onClick={() => dispatch({ type: "SET_SETTING", key: "panolStatus", value: key })}
+            >
+              {option.shortLabel}
+            </Button>
+          ))}
+        </div>
+      </div>
       <div className="mt-6 rounded-md border border-steel-700 bg-steel-850 p-4">
         <h3 className="section-title"><ShieldCheck size={18} />Reglas operativas</h3>
         <div className="grid gap-4 md:grid-cols-3">
@@ -6662,6 +6740,7 @@ function TeacherWorkspace({ currentUser, onLogout }) {
   const [lessonSource, setLessonSource] = useState("local");
   const [returnReminderOpen, setReturnReminderOpen] = useState(true);
   const [sendingPendingEmail, setSendingPendingEmail] = useState(false);
+  const panolStatusKey = state.settings?.panolStatus || "available";
   const inventory = [
     ...state.materials.map((item) => ({ ...item, type: "material", statusText: `${item.stock} ${item.unit}` })),
     ...state.tools.map((item) => ({ ...item, type: "tool", category: "Herramientas", stock: item.status === "disponible" ? 1 : 0, statusText: item.status }))
@@ -6857,6 +6936,7 @@ function TeacherWorkspace({ currentUser, onLogout }) {
             <Check className="mr-2 inline" size={16} />Agregado al carrito: {lastAdded}
           </div>
         )}
+        <PanolStatusCard statusKey={panolStatusKey} compact />
         {state.settings.teacherReturnReminder !== "apagado" && pendingReturnLoans.length > 0 && returnReminderOpen && (
           <Modal title="ATENTO: devoluciones pendientes" onClose={() => setReturnReminderOpen(false)} wide>
             <div className="grid gap-4">
