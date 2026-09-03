@@ -287,6 +287,11 @@ const PANOL_STATUS_OPTIONS = {
 
 const getPanolStatus = (settings = {}) => PANOL_STATUS_OPTIONS[settings.panolStatus] || PANOL_STATUS_OPTIONS.available;
 const publicStatusSettingKeys = ["panolStatus", "panolStatusNote"];
+const pickPublicStatusSettings = (settings = {}) => publicStatusSettingKeys.reduce((acc, key) => {
+  if (settings[key] !== undefined) acc[key] = settings[key];
+  return acc;
+}, {});
+const publicStatusSettingsSignature = (settings = {}) => JSON.stringify(pickPublicStatusSettings(settings));
 
 const getBlockingLoan = (loans, requesterType, requesterId) => {
   if (requesterType === "teacher") return "";
@@ -867,6 +872,7 @@ function AppProvider({ children }) {
   const cloudRevision = useRef(0);
   const localSyncSource = useRef(`${Date.now()}-${Math.random().toString(36).slice(2)}`);
   const lastLocalSettingsSnapshot = useRef("");
+  const lastRemotePublicSettingsSnapshot = useRef("");
   const skipNextCloudSave = useRef(false);
 
   useEffect(() => {
@@ -937,6 +943,7 @@ function AppProvider({ children }) {
         const settingsSnapshot = JSON.stringify(settings);
         if (!settingsSnapshot || settingsSnapshot === lastLocalSettingsSnapshot.current) return;
         lastLocalSettingsSnapshot.current = settingsSnapshot;
+        lastRemotePublicSettingsSnapshot.current = publicStatusSettingsSignature(settings);
         skipNextCloudSave.current = true;
         rawDispatch({ type: "APPLY_REMOTE_SETTINGS", settings });
       } catch (error) {
@@ -973,6 +980,7 @@ function AppProvider({ children }) {
         if (!remoteState?.settings || revision <= cloudRevision.current) return;
         cloudRevision.current = revision;
         lastLocalSettingsSnapshot.current = JSON.stringify(remoteState.settings || {});
+        lastRemotePublicSettingsSnapshot.current = publicStatusSettingsSignature(remoteState.settings || {});
         skipNextCloudSave.current = true;
         rawDispatch({ type: "APPLY_REMOTE_SETTINGS", settings: remoteState.settings });
         setCloudStatus("Base central actualizada en vivo");
@@ -1001,11 +1009,9 @@ function AppProvider({ children }) {
         const revision = Number(data.revision || 0);
         if (revision > cloudRevision.current) {
           cloudRevision.current = revision;
-          const remotePublicSettings = publicStatusSettingKeys.reduce((acc, key) => {
-            if (data.data.settings[key] !== undefined) acc[key] = data.data.settings[key];
-            return acc;
-          }, {});
+          const remotePublicSettings = pickPublicStatusSettings(data.data.settings || {});
           lastLocalSettingsSnapshot.current = JSON.stringify(data.data.settings || {});
+          lastRemotePublicSettingsSnapshot.current = publicStatusSettingsSignature(data.data.settings || {});
           skipNextCloudSave.current = true;
           rawDispatch({ type: "APPLY_REMOTE_SETTINGS", settings: remotePublicSettings });
           setCloudStatus("Base central actualizada en vivo");
@@ -1039,8 +1045,12 @@ function AppProvider({ children }) {
   useEffect(() => {
     if (!isSupabaseConfigured || !supabase || !cloudReady || !cloudSession) return;
     if (skipNextCloudSave.current) {
-      skipNextCloudSave.current = false;
-      return;
+      if (publicStatusSettingsSignature(state.settings || {}) !== lastRemotePublicSettingsSnapshot.current) {
+        skipNextCloudSave.current = false;
+      } else {
+        skipNextCloudSave.current = false;
+        return;
+      }
     }
     const handle = setTimeout(async () => {
       const persistedState = stripHeavyStudentPhotos(state);
@@ -1172,6 +1182,44 @@ function PanolStatusCard({ statusKey = "available", statusNote = "", onToggle, c
         {onToggle && <span className="rounded-xl border border-white/40 bg-white/35 px-3 py-2 text-sm font-black">Cambiar</span>}
       </span>
     </button>
+  );
+}
+
+function PanolStatusNoteEditor({ value = "", onSave }) {
+  const [draft, setDraft] = useState(value || "");
+  const [dirty, setDirty] = useState(false);
+
+  useEffect(() => {
+    if (!dirty) setDraft(value || "");
+  }, [value, dirty]);
+
+  const currentValue = value || "";
+  const hasChanges = draft !== currentValue;
+
+  const save = () => {
+    onSave(draft.trim());
+    setDirty(false);
+  };
+
+  return (
+    <div className="grid gap-3 rounded-xl border border-steel-700 bg-white/70 p-4 shadow-sm dark:bg-steel-900/70">
+      <Field label="Comentario visible para docentes">
+        <textarea
+          className={inputClass}
+          rows={2}
+          value={draft}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            setDirty(true);
+          }}
+          placeholder="Ej: Estoy en la sala de electrónica hasta las 10:30"
+        />
+      </Field>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-slate-500">Este mensaje aparece bajo el estado del pañol en el portal docente.</p>
+        <Button onClick={save} disabled={!hasChanges}><Save size={16} />Guardar comentario</Button>
+      </div>
+    </div>
   );
 }
 
@@ -2164,16 +2212,13 @@ const lowStockCategoryOptions = [
       </section>
 
       <PanolStatusCard statusKey={panolStatusKey} statusNote={state.settings.panolStatusNote} onToggle={togglePanolStatus} />
-      <div className="panel grid gap-2">
-        <Field label="Comentario visible para docentes">
-          <input
-            className={inputClass}
-            value={state.settings.panolStatusNote || ""}
-            onChange={(event) => dispatch({ type: "SET_SETTING", key: "panolStatusNote", value: event.target.value })}
-            placeholder="Ej: Estoy en la sala de electrónica hasta las 10:30"
-          />
-        </Field>
-      </div>
+      <PanolStatusNoteEditor
+        value={state.settings.panolStatusNote || ""}
+        onSave={(note) => {
+          dispatch({ type: "SET_SETTING", key: "panolStatusNote", value: note });
+          notify("Comentario público actualizado");
+        }}
+      />
 
       {detail && (
         <Modal
@@ -6374,14 +6419,13 @@ function SettingsPage() {
             </Button>
           ))}
         </div>
-        <Field label="Comentario público para docentes">
-          <textarea
-            className={inputClass}
-            value={state.settings.panolStatusNote || ""}
-            onChange={(e) => dispatch({ type: "SET_SETTING", key: "panolStatusNote", value: e.target.value })}
-            placeholder="Ej: Estoy en la sala de electrónica hasta las 10:30"
-          />
-        </Field>
+        <PanolStatusNoteEditor
+          value={state.settings.panolStatusNote || ""}
+          onSave={(note) => {
+            dispatch({ type: "SET_SETTING", key: "panolStatusNote", value: note });
+            notify("Comentario público actualizado");
+          }}
+        />
       </div>
       <div className="mt-6 rounded-md border border-steel-700 bg-steel-850 p-4">
         <h3 className="section-title"><ShieldCheck size={18} />Reglas operativas</h3>
