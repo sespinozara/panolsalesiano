@@ -51,6 +51,7 @@ import * as pdfjsLib from "pdfjs-dist";
 import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import * as XLSX from "xlsx";
 import QRCode from "qrcode";
+import { buildMovementSummary } from "./movementSummary.mjs";
 import {
   Bar,
   BarChart,
@@ -1293,10 +1294,11 @@ function NotificationsBell({ notifications, onMarkRead }) {
       <Button
         variant="secondary"
         onClick={() => setOpen(!open)}
-        className="relative px-3"
+        className="pc-icon-button relative px-3"
+        title="Alertas"
+        aria-label="Alertas"
       >
         <Bell size={16} />
-        Alertas
 
         {unread > 0 && (
           <span className="absolute -right-1 -top-1 grid h-5 min-w-5 place-items-center rounded-full bg-red-600 px-1 text-xs text-white">
@@ -1307,6 +1309,25 @@ function NotificationsBell({ notifications, onMarkRead }) {
 
       {popover}
     </div>
+  );
+}
+
+function ThemeSwitch({ isLight, onToggle }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className={`pc-theme-switch ${isLight ? "is-light" : "is-dark"}`}
+      title={isLight ? "Cambiar a tema oscuro" : "Cambiar a tema claro"}
+      aria-label={isLight ? "Cambiar a tema oscuro" : "Cambiar a tema claro"}
+      aria-pressed={!isLight}
+    >
+      <span className="pc-theme-switch-track">
+        <span className="pc-theme-switch-thumb">
+          {isLight ? <Sun size={15} /> : <Moon size={15} />}
+        </span>
+      </span>
+    </button>
   );
 }
 
@@ -1459,10 +1480,10 @@ const inputClass = "pc-input w-full rounded-md border border-steel-700 bg-steel-
 function Modal({ title, children, onClose, wide = false }) {
   return (
     <div className="pc-modal-backdrop fixed inset-0 z-[1500] grid place-items-center bg-black/60 p-2 sm:p-4" onMouseDown={onClose}>
-      <div className={`pc-modal-card flex max-h-[calc(100dvh-1.5rem)] min-h-0 w-full ${wide ? "max-w-[min(1180px,calc(100vw-2rem))]" : "max-w-2xl"} flex-col overflow-hidden rounded-lg border border-steel-700 bg-steel-900 shadow-2xl`} onMouseDown={(event) => event.stopPropagation()}>
+      <div className={`pc-modal-card flex min-h-0 w-full ${wide ? "max-w-[min(1180px,calc(100vw-2rem))]" : "max-w-2xl"} flex-col overflow-hidden rounded-lg border border-steel-700 bg-steel-900 shadow-2xl`} onMouseDown={(event) => event.stopPropagation()}>
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 px-3 py-3 dark:border-steel-700 sm:px-5 sm:py-4">
           <h3 className="text-lg font-semibold text-slate-950 dark:text-white">{title}</h3>
-          <Button variant="ghost" onClick={onClose} className="px-2"><X size={18} /></Button>
+          <Button variant="ghost" onClick={onClose} className="pc-icon-button px-2" title="Cerrar" aria-label="Cerrar"><X size={18} /></Button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-5">{children}</div>
       </div>
@@ -1699,11 +1720,11 @@ function Layout({ section, setSection, currentUser, onLogout }) {
             <div className="mobile-actions flex flex-wrap items-center gap-2">
               <span className="hidden text-sm text-slate-400 md:inline">{currentUser?.name}</span>
               <NotificationsBell notifications={adminNotifications} onMarkRead={() => dispatch({ type: "MARK_ADMIN_NOTIFICATIONS_READ" })} />
-              <Button variant="secondary" onClick={() => dispatch({ type: "SET_SETTING", key: "theme", value: isLight ? "dark" : "light" })} title={isLight ? "Tema oscuro" : "Tema claro"} className="shrink-0 px-3">
-                {isLight ? <Moon size={16} /> : <Sun size={16} />}
-                {isLight ? "Oscuro" : "Claro"}
-              </Button>
-              <Button variant="secondary" onClick={onLogout} className="shrink-0 px-3"><LogOut size={16} />Salir</Button>
+              <ThemeSwitch
+                isLight={isLight}
+                onToggle={() => dispatch({ type: "SET_SETTING", key: "theme", value: isLight ? "dark" : "light" })}
+              />
+              <Button variant="secondary" onClick={onLogout} className="pc-icon-button shrink-0 px-3" title="Salir" aria-label="Salir"><LogOut size={16} /></Button>
             </div>
             <div className="pc-mobile-nav mobile-nav -mx-1 flex gap-2 overflow-x-auto px-1 pb-1 lg:hidden">
               {allowedNav.map(([id, label, Icon]) => (
@@ -2000,6 +2021,7 @@ function Dashboard({ openLoans, openKeys, openAlert }) {
   const [lowStockCategory, setLowStockCategory] = useState("todas");
   const [lowStockMode, setLowStockMode] = useState("controlados");
   const [editingMaterial, setEditingMaterial] = useState(null);
+  const [collapsedSections, setCollapsedSections] = useState({});
   const panolStatusKey = state.settings?.panolStatus || "available";
   const panolStatus = getPanolStatus(state.settings);
   const togglePanolStatus = () => {
@@ -2154,11 +2176,19 @@ const lowStockCategoryOptions = [
   };
   const dashboardAlertMap = Object.fromEntries(buildAdminAlerts(state).map((alert) => [alert.id, alert]));
 
+  const toggleSection = (id) => setCollapsedSections((current) => ({ ...current, [id]: !current[id] }));
+  const getMovementLoan = (movement) => {
+    if (!movement) return null;
+    const folio = movement.detail?.match(/\bPRE-\d{4}-\d{4}\b/)?.[0] || "";
+    return state.loans.find((loan) => loan.id === movement.loanId) ||
+      state.loans.find((loan) => folio && displayFolio(loan, "PRE") === folio) ||
+      null;
+  };
+
   const movementFolio = movementDetail?.detail?.match(/\bPRE-\d{4}-\d{4}\b/)?.[0] || "";
 
   const movementLoan = movementDetail
-    ? state.loans.find((loan) => loan.id === movementDetail.loanId) ||
-      state.loans.find((loan) => movementFolio && displayFolio(loan, "PRE") === movementFolio)
+    ? getMovementLoan(movementDetail)
     : null;
 
   const movementKey = movementDetail
@@ -2181,44 +2211,48 @@ const lowStockCategoryOptions = [
 
   return (
     <div className="dashboard-control grid gap-3">
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {kpis.map(([id, label, value, Icon, tone]) => (
-          <button
-            key={label}
-            type="button"
-            onClick={() => setDetail(id)}
-            className="panel dashboard-kpi text-left transition hover:border-safety-500 hover:ring-2 hover:ring-safety-500"
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-slate-400">{label}</p>
-                <p className="mt-1 text-2xl font-black text-white sm:text-3xl">{value}</p>
-              </div>
+      <CollapsibleSection title="Resumen operativo" icon={LayoutDashboard} collapsed={collapsedSections.kpis} onToggle={() => toggleSection("kpis")} dense>
+        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {kpis.map(([id, label, value, Icon, tone]) => (
+            <button
+              key={label}
+              type="button"
+              onClick={() => setDetail(id)}
+              className="panel dashboard-kpi text-left transition hover:border-safety-500 hover:ring-2 hover:ring-safety-500"
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-slate-400">{label}</p>
+                  <p className="mt-1 text-2xl font-black text-white sm:text-3xl">{value}</p>
+                </div>
 
-              <div
-                className={`grid h-9 w-9 place-items-center rounded-md ${
-                  tone === "red"
-                    ? "bg-red-500/15 text-red-300"
-                    : tone === "amber"
-                      ? "bg-amber-500/15 text-amber-300"
-                      : "bg-sky-500/15 text-sky-300"
-                }`}
-              >
-                <Icon size={18} />
+                <div
+                  className={`grid h-9 w-9 place-items-center rounded-md ${
+                    tone === "red"
+                      ? "bg-red-500/15 text-red-300"
+                      : tone === "amber"
+                        ? "bg-amber-500/15 text-amber-300"
+                        : "bg-sky-500/15 text-sky-300"
+                  }`}
+                >
+                  <Icon size={18} />
+                </div>
               </div>
-            </div>
-          </button>
-        ))}
-      </section>
+            </button>
+          ))}
+        </section>
+      </CollapsibleSection>
 
-      <PanolStatusCard statusKey={panolStatusKey} statusNote={state.settings.panolStatusNote} onToggle={togglePanolStatus} />
-      <PanolStatusNoteEditor
-        value={state.settings.panolStatusNote || ""}
-        onSave={(note) => {
-          dispatch({ type: "SET_SETTING", key: "panolStatusNote", value: note });
-          notify("Comentario público actualizado");
-        }}
-      />
+      <CollapsibleSection title="Estado del pañol" icon={ShieldCheck} collapsed={collapsedSections.status} onToggle={() => toggleSection("status")} dense>
+        <PanolStatusCard statusKey={panolStatusKey} statusNote={state.settings.panolStatusNote} onToggle={togglePanolStatus} />
+        <PanolStatusNoteEditor
+          value={state.settings.panolStatusNote || ""}
+          onSave={(note) => {
+            dispatch({ type: "SET_SETTING", key: "panolStatusNote", value: note });
+            notify("Comentario público actualizado");
+          }}
+        />
+      </CollapsibleSection>
 
       {detail && (
         <Modal
@@ -2477,17 +2511,12 @@ const lowStockCategoryOptions = [
         </Modal>
       )}
 
-      <section className="panel dashboard-alerts">
-        <h2 className="section-title">
-          <AlertTriangle size={18} />
-          Alertas inteligentes
-        </h2>
-
+      <CollapsibleSection title="Alertas operativas" icon={AlertTriangle} collapsed={collapsedSections.alerts} onToggle={() => toggleSection("alerts")}>
         <div className="grid gap-2 md:grid-cols-2">
           <AlertTile label="Personas bloqueadas" value={blockedPeopleCount} tone="red" onClick={() => setAlertDetail(dashboardAlertMap.blocked)} />
           <AlertTile label="Herramientas no disponibles" value={unavailableTools.length} tone="amber" onClick={() => setAlertDetail(dashboardAlertMap.tools)} />
         </div>
-      </section>
+      </CollapsibleSection>
 
       {alertDetail && (
         <Modal title={alertDetail.title} onClose={() => setAlertDetail(null)} wide>
@@ -2508,38 +2537,41 @@ const lowStockCategoryOptions = [
         </Modal>
       )}
 
-      <section className="dashboard-chart-row grid gap-3 xl:grid-cols-2">
-        <ChartPanel title="Top 5 materiales solicitados">
-          <ResponsiveContainer width="100%" height={145}>
-            <BarChart data={requested}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#cbd5e1" />
-              <XAxis dataKey="name" stroke="#64748b" tick={{ fontSize: 11 }} />
-              <YAxis stroke="#64748b" />
-              <Tooltip contentStyle={chartTooltipStyle} labelStyle={{ color: "#061225" }} />
-              <Bar dataKey="qty" fill="#f59e0b" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </ChartPanel>
+      <CollapsibleSection title="Gráficos" icon={BarChart3} collapsed={collapsedSections.charts} onToggle={() => toggleSection("charts")} dense>
+        <section className="dashboard-chart-row grid gap-3 xl:grid-cols-2">
+          <ChartPanel title="Top 5 materiales solicitados">
+            <ResponsiveContainer width="100%" height={145}>
+              <BarChart data={requested}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#cbd5e1" />
+                <XAxis dataKey="name" stroke="#64748b" tick={{ fontSize: 11 }} />
+                <YAxis stroke="#64748b" />
+                <Tooltip contentStyle={chartTooltipStyle} labelStyle={{ color: "#061225" }} />
+                <Bar dataKey="qty" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartPanel>
 
-        <ChartPanel title="Préstamos por día">
-          <ResponsiveContainer width="100%" height={145}>
-            <LineChart data={lineData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#cbd5e1" />
-              <XAxis dataKey="label" stroke="#64748b" />
-              <YAxis stroke="#64748b" />
-              <Tooltip contentStyle={chartTooltipStyle} labelStyle={{ color: "#061225" }} />
-              <Line
-                type="monotone"
-                dataKey="prestamos"
-                stroke="#38bdf8"
-                strokeWidth={3}
-                dot={{ fill: "#38bdf8" }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        </ChartPanel>
-      </section>
+          <ChartPanel title="Préstamos por día">
+            <ResponsiveContainer width="100%" height={145}>
+              <LineChart data={lineData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#cbd5e1" />
+                <XAxis dataKey="label" stroke="#64748b" />
+                <YAxis stroke="#64748b" />
+                <Tooltip contentStyle={chartTooltipStyle} labelStyle={{ color: "#061225" }} />
+                <Line
+                  type="monotone"
+                  dataKey="prestamos"
+                  stroke="#38bdf8"
+                  strokeWidth={3}
+                  dot={{ fill: "#38bdf8" }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </ChartPanel>
+        </section>
+      </CollapsibleSection>
 
+      <CollapsibleSection title="Movimientos y stock crítico" icon={History} collapsed={collapsedSections.movements} onToggle={() => toggleSection("movements")} dense>
       <section className="grid gap-3 xl:grid-cols-[minmax(420px,1.2fr)_minmax(0,0.8fr)]">
         <div className="panel dashboard-table-panel xl:order-2">
           <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -2583,7 +2615,9 @@ const lowStockCategoryOptions = [
           </div>
 
           <div className="dashboard-movements-list space-y-2">
-            {state.movements.slice(0, 10).map((m) => (
+            {state.movements.slice(0, 10).map((m) => {
+              const linkedLoan = getMovementLoan(m);
+              return (
               <button
                 key={m.id}
                 type="button"
@@ -2591,7 +2625,7 @@ const lowStockCategoryOptions = [
                 className="w-full rounded-md border border-steel-700 bg-steel-850 px-3 py-3 text-left transition hover:border-safety-500 hover:bg-steel-800 hover:ring-2 hover:ring-safety-500/30"
               >
                 <div className="flex justify-between gap-2">
-                  <p className="line-clamp-2 text-sm font-semibold text-white">{m.detail}</p>
+                  <p className="line-clamp-2 text-sm font-semibold text-white">{buildMovementSummary(m, linkedLoan)}</p>
                   <Badge tone={m.type === "entrada" ? "green" : m.type === "solicitud" ? "blue" : "amber"}>
                     {m.type}
                   </Badge>
@@ -2601,7 +2635,8 @@ const lowStockCategoryOptions = [
                   {formatDate(m.date)} · {m.requesterName || "Sin responsable"}
                 </p>
               </button>
-            ))}
+              );
+            })}
 
             {state.movements.length === 0 && (
               <div className="rounded-md border border-steel-700 bg-steel-850 p-4 text-center text-sm text-slate-400">
@@ -2611,37 +2646,53 @@ const lowStockCategoryOptions = [
           </div>
         </div>
       </section>
+      </CollapsibleSection>
 
-    {overdueStudents.length > 0 && (
-      <section className="panel">
-        <h2 className="section-title">
-          <RotateCcw size={18} />
-          Alumnos pendientes con atraso
-        </h2>
-
-        <DataTable
-          rows={overdueStudents.map((l) => ({
-            ...l,
-            folioText: displayFolio(l, "PRE"),
-            days: overdueDays(l.expectedReturn)
-          }))}
-          columns={[
-            ["folioText", "Folio"],
-            ["requesterName", "Alumno"],
-            ["expectedReturn", "Fecha esperada"],
-            ["days", "Días de atraso"],
-            ["notes", "Observaciones"]
-          ]}
-          compact
-        />
-      </section>
-    )}
+      {overdueStudents.length > 0 && (
+        <CollapsibleSection title="Alumnos pendientes con atraso" icon={RotateCcw} collapsed={collapsedSections.overdueStudents} onToggle={() => toggleSection("overdueStudents")}>
+          <DataTable
+            rows={overdueStudents.map((l) => ({
+              ...l,
+              folioText: displayFolio(l, "PRE"),
+              days: overdueDays(l.expectedReturn)
+            }))}
+            columns={[
+              ["folioText", "Folio"],
+              ["requesterName", "Alumno"],
+              ["expectedReturn", "Fecha esperada"],
+              ["days", "Días de atraso"],
+              ["notes", "Observaciones"]
+            ]}
+            compact
+          />
+        </CollapsibleSection>
+      )}
     </div>
   );
 }
 
 function ChartPanel({ title, children }) {
   return <div className="panel dashboard-chart-panel"><h2 className="section-title"><BarChart3 size={18} />{title}</h2>{children}</div>;
+}
+
+function CollapsibleSection({ title, icon: Icon, collapsed, onToggle, children, dense = false }) {
+  return (
+    <section className={`${dense ? "dashboard-collapsible" : "panel dashboard-collapsible"} ${collapsed ? "is-collapsed" : ""}`}>
+      <button
+        type="button"
+        onClick={onToggle}
+        className="dashboard-collapsible-trigger"
+        aria-expanded={!collapsed}
+      >
+        <span className="inline-flex min-w-0 items-center gap-2">
+          {Icon && <Icon size={18} />}
+          <span className="truncate">{title}</span>
+        </span>
+        <ChevronRight className={`dashboard-collapsible-chevron ${collapsed ? "" : "rotate-90"}`} size={18} />
+      </button>
+      {!collapsed && <div className="dashboard-collapsible-body">{children}</div>}
+    </section>
+  );
 }
 
 function AlertTile({ label, value, tone, onClick }) {
@@ -6920,15 +6971,23 @@ function TeacherWorkspace({ currentUser, onLogout }) {
   const [lessonSource, setLessonSource] = useState("local");
   const [returnReminderOpen, setReturnReminderOpen] = useState(true);
   const [sendingPendingEmail, setSendingPendingEmail] = useState(false);
+  const [teacherInventoryCategory, setTeacherInventoryCategory] = useState("todas");
+  const [teacherInventoryMaxQty, setTeacherInventoryMaxQty] = useState(0);
   const panolStatusKey = state.settings?.panolStatus || "available";
-  const inventory = [
-    ...state.materials.map((item) => ({ ...item, type: "material", statusText: `${item.stock} ${item.unit}` })),
-    ...state.tools.map((item) => ({ ...item, type: "tool", category: "Herramientas", stock: item.status === "disponible" ? 1 : 0, statusText: item.status }))
-  ].filter((item) => `${item.name} ${item.code} ${item.category}`.toLowerCase().includes(query.toLowerCase()));
   const fullInventory = [
     ...state.materials.map((item) => ({ ...item, type: "material", statusText: `${item.stock} ${item.unit}` })),
     ...state.tools.map((item) => ({ ...item, type: "tool", category: "Herramientas", stock: item.status === "disponible" ? 1 : 0, statusText: item.status }))
   ];
+  const teacherInventoryCategories = [...new Set(fullInventory.map((item) => item.category || "Sin categoría").filter(Boolean))].sort();
+  const teacherInventoryMaxStock = Math.max(0, ...fullInventory.map((item) => Number(item.stock || 0)));
+  const effectiveTeacherInventoryMaxQty = teacherInventoryMaxQty || teacherInventoryMaxStock;
+  const inventory = fullInventory.filter((item) => {
+    const searchable = `${item.name} ${item.code} ${item.category}`.toLowerCase();
+    const matchesQuery = searchable.includes(query.toLowerCase());
+    const matchesCategory = teacherInventoryCategory === "todas" || (item.category || "Sin categoría") === teacherInventoryCategory;
+    const matchesQty = Number(item.stock || 0) <= Number(effectiveTeacherInventoryMaxQty || 0);
+    return matchesQuery && matchesCategory && matchesQty;
+  });
   const myRequests = (state.requests || []).filter((request) => request.requesterId === teacher.id);
   const myMessages = (state.messages || []).filter((msg) => msg.teacherId === teacher.id).sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
   const unreadTeacherMessagesCount = myMessages.filter((msg) => msg.from === "pañol" && !msg.teacherRead).length;
@@ -7101,9 +7160,9 @@ function TeacherWorkspace({ currentUser, onLogout }) {
             <div className="grid h-12 w-12 shrink-0 place-items-center rounded-md border border-safety-500/50 bg-white p-1 shadow-sm"><img src="/logo-salesiano.png" alt="Colegio Salesiano" className="h-full w-full object-contain" /></div>
             <div><p className="text-sm text-slate-400">PAÑOL CENTRAL / Portal docente</p><h1 className="text-2xl font-bold text-white">{teacher.name}</h1></div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="mobile-actions flex flex-wrap items-center gap-2">
             <NotificationsBell notifications={teacherNotifications} onMarkRead={() => dispatch({ type: "MARK_TEACHER_NOTIFICATIONS_READ", teacherId: teacher.id })} />
-            <Button variant="secondary" onClick={onLogout}><LogOut size={16} />Salir</Button>
+            <Button variant="secondary" onClick={onLogout} className="pc-icon-button px-3" title="Salir" aria-label="Salir"><LogOut size={16} /></Button>
           </div>
         </div>
       </header>
@@ -7274,9 +7333,44 @@ function TeacherWorkspace({ currentUser, onLogout }) {
           </div>
         )}
         {tab === "inventory" && (
-          <div className="panel grid gap-4">
-            <div className="relative"><Search className="pointer-events-none absolute left-3 top-2.5 text-slate-500" size={18} /><input className={`${inputClass} pl-10`} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar material, herramienta, código o categoría" /></div>
-            <DataTable rows={inventory} columns={[["name", "Ítem"], ["code", "Código"], ["category", "Categoría"], ["statusText", "Disponible/estado"], ["location", "Ubicación"]]} actions={(row) => <Button variant="secondary" disabled={Number(row.stock) <= 0} onClick={() => addToCart(row)}><Plus size={16} />Agregar</Button>} compact />
+          <div className="teacher-inventory-grid grid gap-4 xl:grid-cols-[260px_1fr]">
+            <aside className="panel teacher-filter-panel grid gap-4 self-start">
+              <div>
+                <h2 className="section-title mb-1"><Search size={18} />Filtros</h2>
+                <p className="text-sm text-slate-400">Filtra el inventario en tiempo real.</p>
+              </div>
+              <Field label="Categoría">
+                <select className={inputClass} value={teacherInventoryCategory} onChange={(e) => setTeacherInventoryCategory(e.target.value)}>
+                  <option value="todas">Todas las categorías</option>
+                  {teacherInventoryCategories.map((category) => <option key={category} value={category}>{category}</option>)}
+                </select>
+              </Field>
+              <Field label="Cantidad máxima">
+                <div className="grid gap-2">
+                  <div className="flex items-center justify-between gap-2 text-xs text-slate-400">
+                    <span>0</span>
+                    <span className="rounded-md border border-steel-700 bg-steel-850 px-2 py-1 font-bold text-slate-100">≤ {effectiveTeacherInventoryMaxQty}</span>
+                    <span>{teacherInventoryMaxStock}</span>
+                  </div>
+                  <input
+                    className="pc-range"
+                    type="range"
+                    min="0"
+                    max={teacherInventoryMaxStock}
+                    value={effectiveTeacherInventoryMaxQty}
+                    onChange={(e) => setTeacherInventoryMaxQty(Number(e.target.value))}
+                  />
+                </div>
+              </Field>
+              <div className="rounded-md border border-steel-700 bg-steel-850 p-3 text-sm text-slate-300">
+                Mostrando <strong className="text-white">{inventory.length}</strong> ítem(s).
+              </div>
+              <Button variant="secondary" onClick={() => { setQuery(""); setTeacherInventoryCategory("todas"); setTeacherInventoryMaxQty(0); }}>Limpiar filtros</Button>
+            </aside>
+            <div className="panel grid gap-4">
+              <div className="relative"><Search className="pointer-events-none absolute left-3 top-2.5 text-slate-500" size={18} /><input className={`${inputClass} pl-10`} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar material, herramienta, código o categoría" /></div>
+              <DataTable rows={inventory} columns={[["name", "Ítem"], ["code", "Código"], ["category", "Categoría"], ["statusText", "Disponible/estado"], ["location", "Ubicación"]]} actions={(row) => <Button variant="secondary" disabled={Number(row.stock) <= 0} onClick={() => addToCart(row)}><Plus size={16} />Agregar</Button>} compact />
+            </div>
           </div>
         )}
         {tab === "history" && <div className="panel"><DataTable rows={myRequests.map((request) => ({ ...request, folioText: displayFolio(request, "SOL"), itemsText: request.items.map((item) => `${item.name} (${item.qty}${item.prepStatus ? `, ${item.prepStatus}` : ""})`).join(", ") }))} columns={[["folioText", "Folio"], ["createdAt", "Fecha"], ["expectedDate", "Fecha requerida"], ["status", "Estado"], ["itemsText", "Ítems"], ["reviewNotes", "Respuesta pañol"]]} actions={(request) => <Button variant="secondary" onClick={() => { setChatRequestId(request.id); setChatOpen(true); }}><MessageSquare size={16} />Consultar</Button>} /></div>}
